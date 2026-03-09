@@ -27,5 +27,15 @@ fn main() -> Result<()> {
 
     println!("Scanning {}...", scan_path.display());
 
+    let projects = scanner::discover_projects(&scan_path)?;
+    println!("Found {} projects:\n", projects.len());
+    for project in &projects {
+        let name = project
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        println!("  {}", name);
+    }
+
     Ok(())
 }
