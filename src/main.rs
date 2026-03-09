@@ -2,6 +2,7 @@ mod git;
 mod scanner;
 mod table;
 mod types;
+mod watch;
 
 use std::path::PathBuf;
 
@@ -19,7 +20,9 @@ use clap::{Parser, ValueEnum};
     after_help = "EXAMPLES:\n  \
                   devpulse              Scan current directory\n  \
                   devpulse ~/projects   Scan a specific directory\n  \
-                  devpulse --sort name  Sort projects alphabetically"
+                  devpulse --sort name  Sort projects alphabetically\n  \
+                  devpulse --watch      Refresh every 60s\n  \
+                  devpulse -w -i 30     Refresh every 30s"
 )]
 struct Cli {
     /// Directory to scan for projects [default: current directory]
@@ -33,6 +36,14 @@ struct Cli {
     /// Output results as JSON instead of a table
     #[arg(long)]
     json: bool,
+
+    /// Watch mode: re-run at a regular interval
+    #[arg(long, short = 'w')]
+    watch: bool,
+
+    /// Watch interval in seconds [default: 60]
+    #[arg(long, short = 'i', default_value = "60")]
+    interval: u64,
 }
 
 #[derive(Clone, ValueEnum)]
@@ -45,18 +56,26 @@ enum SortBy {
     Status,
 }
 
-fn main() -> Result<()> {
-    let cli = Cli::parse();
+fn sort_statuses(statuses: &mut [types::ProjectStatus], sort: &SortBy) {
+    match sort {
+        SortBy::Activity => {
+            statuses.sort_by(|a, b| a.last_commit.cmp(&b.last_commit));
+        }
+        SortBy::Name => {
+            statuses.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        }
+        SortBy::Status => {
+            statuses.sort_by(|a, b| {
+                a.is_clean
+                    .cmp(&b.is_clean)
+                    .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            });
+        }
+    }
+}
 
-    let scan_path = if cli.path.is_absolute() {
-        cli.path
-    } else {
-        std::env::current_dir()?.join(&cli.path)
-    };
-
-    println!("Scanning {}...\n", scan_path.display());
-
-    let project_paths = scanner::discover_projects(&scan_path)?;
+fn scan_and_display(scan_path: &std::path::Path, sort: &SortBy, json: bool) -> Result<()> {
+    let project_paths = scanner::discover_projects(scan_path)?;
 
     if project_paths.is_empty() {
         println!(
@@ -75,30 +94,32 @@ fn main() -> Result<()> {
         }
     }
 
-    // Sort based on --sort flag
-    match cli.sort {
-        SortBy::Activity => {
-            // Most stale first (oldest commit first, None at the top)
-            statuses.sort_by(|a, b| a.last_commit.cmp(&b.last_commit));
-        }
-        SortBy::Name => {
-            statuses.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-        }
-        SortBy::Status => {
-            // Dirty first, then clean; within same status, by name
-            statuses.sort_by(|a, b| {
-                a.is_clean
-                    .cmp(&b.is_clean)
-                    .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-            });
-        }
-    }
+    sort_statuses(&mut statuses, sort);
 
-    if cli.json {
-        let json = serde_json::to_string_pretty(&statuses)?;
-        println!("{json}");
+    if json {
+        let json_out = serde_json::to_string_pretty(&statuses)?;
+        println!("{json_out}");
     } else {
         table::print_table(&statuses);
+    }
+
+    Ok(())
+}
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    let scan_path = if cli.path.is_absolute() {
+        cli.path.clone()
+    } else {
+        std::env::current_dir()?.join(&cli.path)
+    };
+
+    if cli.watch {
+        watch::run_watch_loop(&scan_path, &cli.sort, cli.json, cli.interval)?;
+    } else {
+        println!("Scanning {}...\n", scan_path.display());
+        scan_and_display(&scan_path, &cli.sort, cli.json)?;
     }
 
     Ok(())
