@@ -7,6 +7,7 @@ pub struct ProjectStatus {
     /// Project name (directory name)
     pub name: String,
     /// Path to the project root
+    #[allow(dead_code)]
     pub path: PathBuf,
     /// Current branch name
     pub branch: String,
