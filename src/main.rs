@@ -27,14 +27,27 @@ fn main() -> Result<()> {
 
     println!("Scanning {}...", scan_path.display());
 
-    let projects = scanner::discover_projects(&scan_path)?;
-    println!("Found {} projects:\n", projects.len());
-    for project in &projects {
-        let name = project
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-        println!("  {}", name);
+    let project_paths = scanner::discover_projects(&scan_path)?;
+    println!("Found {} projects\n", project_paths.len());
+
+    let mut statuses = Vec::new();
+    for path in &project_paths {
+        match git::get_project_status(path) {
+            Ok(status) => statuses.push(status),
+            Err(e) => eprintln!("  Warning: skipping {}: {}", path.display(), e),
+        }
+    }
+
+    for s in &statuses {
+        let status_label = if s.is_clean { "clean" } else { "dirty" };
+        let last = s
+            .last_commit
+            .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+            .unwrap_or_else(|| "no commits".to_string());
+        println!(
+            "  {} [{}] {} | {} changed | last commit: {} | ahead: {} behind: {}",
+            s.name, s.branch, status_label, s.changed_files, last, s.ahead, s.behind
+        );
     }
 
     Ok(())
