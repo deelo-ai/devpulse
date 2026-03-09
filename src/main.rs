@@ -1,5 +1,6 @@
 mod git;
 mod scanner;
+mod summary;
 mod table;
 mod tui;
 mod types;
@@ -102,10 +103,17 @@ fn scan_and_display(scan_path: &std::path::Path, sort: &SortBy, json: bool) -> R
     sort_statuses(&mut statuses, sort);
 
     if json {
-        let json_out = serde_json::to_string_pretty(&statuses)?;
-        println!("{json_out}");
+        let summary = summary::Summary::from_statuses(&statuses);
+        let output = serde_json::json!({
+            "projects": statuses,
+            "summary": summary,
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
         table::print_table(&statuses);
+        let summary = summary::Summary::from_statuses(&statuses);
+        summary.print_colored();
+        println!();
     }
 
     Ok(())
