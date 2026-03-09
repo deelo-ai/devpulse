@@ -23,4 +23,6 @@ pub struct ProjectStatus {
     pub ahead: usize,
     /// Commits behind upstream
     pub behind: usize,
+    /// Remote URL (e.g. GitHub URL) if available
+    pub remote_url: Option<String>,
 }

@@ -20,6 +20,7 @@ pub fn get_project_status(path: &Path) -> Result<ProjectStatus> {
     let (changed_files, is_clean) = get_dirty_count(&repo)?;
     let last_commit = get_last_commit_time(&repo)?;
     let (ahead, behind) = get_ahead_behind(&repo);
+    let remote_url = get_remote_url(&repo);
 
     Ok(ProjectStatus {
         name,
@@ -30,6 +31,7 @@ pub fn get_project_status(path: &Path) -> Result<ProjectStatus> {
         last_commit,
         ahead,
         behind,
+        remote_url,
     })
 }
 
@@ -72,6 +74,41 @@ fn get_last_commit_time(repo: &Repository) -> Result<Option<DateTime<Utc>>> {
     Ok(dt)
 }
 
+/// Get the remote URL for the "origin" remote, converting SSH URLs to HTTPS.
+fn get_remote_url(repo: &Repository) -> Option<String> {
+    let remote = repo.find_remote("origin").ok()?;
+    let url = remote.url()?.to_string();
+    Some(normalize_remote_url(&url))
+}
+
+/// Normalize a git remote URL to an HTTPS browser URL.
+/// Converts `git@github.com:user/repo.git` → `https://github.com/user/repo`
+pub fn normalize_remote_url(url: &str) -> String {
+    let mut url = url.to_string();
+
+    // Convert SSH format: git@host:user/repo.git → https://host/user/repo
+    if url.starts_with("git@") {
+        url = url.replacen("git@", "https://", 1);
+        if let Some(colon_pos) = url.find(':') {
+            // Only replace if it's the host:path separator (not in https://)
+            let after_scheme = &url["https://".len()..];
+            if let Some(rel_pos) = after_scheme.find(':') {
+                let abs_pos = "https://".len() + rel_pos;
+                url.replace_range(abs_pos..abs_pos + 1, "/");
+            } else {
+                url.replace_range(colon_pos..colon_pos + 1, "/");
+            }
+        }
+    }
+
+    // Strip trailing .git
+    if url.ends_with(".git") {
+        url.truncate(url.len() - 4);
+    }
+
+    url
+}
+
 /// Get ahead/behind counts relative to upstream tracking branch.
 fn get_ahead_behind(repo: &Repository) -> (usize, usize) {
     let result = (|| -> Result<(usize, usize)> {
@@ -89,4 +126,49 @@ fn get_ahead_behind(repo: &Repository) -> (usize, usize) {
     })();
 
     result.unwrap_or((0, 0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_ssh_url() {
+        assert_eq!(
+            normalize_remote_url("git@github.com:user/repo.git"),
+            "https://github.com/user/repo"
+        );
+    }
+
+    #[test]
+    fn test_normalize_https_url_with_git_suffix() {
+        assert_eq!(
+            normalize_remote_url("https://github.com/user/repo.git"),
+            "https://github.com/user/repo"
+        );
+    }
+
+    #[test]
+    fn test_normalize_https_url_without_git_suffix() {
+        assert_eq!(
+            normalize_remote_url("https://github.com/user/repo"),
+            "https://github.com/user/repo"
+        );
+    }
+
+    #[test]
+    fn test_normalize_ssh_url_gitlab() {
+        assert_eq!(
+            normalize_remote_url("git@gitlab.com:org/project.git"),
+            "https://gitlab.com/org/project"
+        );
+    }
+
+    #[test]
+    fn test_normalize_plain_url() {
+        assert_eq!(
+            normalize_remote_url("https://example.com/repo"),
+            "https://example.com/repo"
+        );
+    }
 }

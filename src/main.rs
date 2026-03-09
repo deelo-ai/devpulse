@@ -1,6 +1,7 @@
 mod git;
 mod scanner;
 mod table;
+mod tui;
 mod types;
 mod watch;
 
@@ -44,6 +45,10 @@ struct Cli {
     /// Watch interval in seconds [default: 60]
     #[arg(long, short = 'i', default_value = "60")]
     interval: u64,
+
+    /// Launch interactive TUI mode
+    #[arg(long)]
+    tui: bool,
 }
 
 #[derive(Clone, ValueEnum)]
@@ -115,7 +120,9 @@ fn main() -> Result<()> {
         std::env::current_dir()?.join(&cli.path)
     };
 
-    if cli.watch {
+    if cli.tui {
+        tui::run_tui(&scan_path)?;
+    } else if cli.watch {
         watch::run_watch_loop(&scan_path, &cli.sort, cli.json, cli.interval)?;
     } else {
         println!("Scanning {}...\n", scan_path.display());
