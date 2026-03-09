@@ -1,11 +1,12 @@
 mod git;
 mod scanner;
+mod table;
 mod types;
 
 use std::path::PathBuf;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 
 /// devpulse — Project Health Dashboard for Your Terminal
 #[derive(Parser)]
@@ -14,6 +15,20 @@ struct Cli {
     /// Directory to scan for projects (defaults to current directory)
     #[arg(default_value = ".")]
     path: PathBuf,
+
+    /// Sort projects by: activity (most stale first), name, or status
+    #[arg(long, default_value = "activity")]
+    sort: SortBy,
+}
+
+#[derive(Clone, ValueEnum)]
+enum SortBy {
+    /// Sort by last commit time, most stale first
+    Activity,
+    /// Sort by project name alphabetically
+    Name,
+    /// Sort by status (dirty first, then clean)
+    Status,
 }
 
 fn main() -> Result<()> {
@@ -25,10 +40,9 @@ fn main() -> Result<()> {
         std::env::current_dir()?.join(&cli.path)
     };
 
-    println!("Scanning {}...", scan_path.display());
+    println!("Scanning {}...\n", scan_path.display());
 
     let project_paths = scanner::discover_projects(&scan_path)?;
-    println!("Found {} projects\n", project_paths.len());
 
     let mut statuses = Vec::new();
     for path in &project_paths {
@@ -38,17 +52,26 @@ fn main() -> Result<()> {
         }
     }
 
-    for s in &statuses {
-        let status_label = if s.is_clean { "clean" } else { "dirty" };
-        let last = s
-            .last_commit
-            .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
-            .unwrap_or_else(|| "no commits".to_string());
-        println!(
-            "  {} [{}] {} | {} changed | last commit: {} | ahead: {} behind: {}",
-            s.name, s.branch, status_label, s.changed_files, last, s.ahead, s.behind
-        );
+    // Sort based on --sort flag
+    match cli.sort {
+        SortBy::Activity => {
+            // Most stale first (oldest commit first, None at the top)
+            statuses.sort_by(|a, b| a.last_commit.cmp(&b.last_commit));
+        }
+        SortBy::Name => {
+            statuses.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        }
+        SortBy::Status => {
+            // Dirty first, then clean; within same status, by name
+            statuses.sort_by(|a, b| {
+                a.is_clean
+                    .cmp(&b.is_clean)
+                    .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            });
+        }
     }
+
+    table::print_table(&statuses);
 
     Ok(())
 }
