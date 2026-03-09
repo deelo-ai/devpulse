@@ -1,3 +1,4 @@
+mod filter;
 mod git;
 mod scanner;
 mod summary;
@@ -50,6 +51,11 @@ struct Cli {
     /// Launch interactive TUI mode
     #[arg(long)]
     tui: bool,
+
+    /// Filter projects by criteria. Can be specified multiple times.
+    /// Values: dirty, clean, stale, unpushed, name:<substring>
+    #[arg(long, short = 'f')]
+    filter: Vec<String>,
 }
 
 #[derive(Clone, ValueEnum)]
@@ -80,7 +86,27 @@ fn sort_statuses(statuses: &mut [types::ProjectStatus], sort: &SortBy) {
     }
 }
 
-fn scan_and_display(scan_path: &std::path::Path, sort: &SortBy, json: bool) -> Result<()> {
+/// Parse and validate filter expressions from CLI arguments.
+fn parse_filters(filter_args: &[String]) -> Result<Vec<filter::ProjectFilter>> {
+    let mut filters = Vec::new();
+    for expr in filter_args {
+        match filter::parse_filter(expr) {
+            Some(f) => filters.push(f),
+            None => anyhow::bail!(
+                "Unknown filter: '{}'. Valid filters: dirty, clean, stale, unpushed, name:<substring>",
+                expr
+            ),
+        }
+    }
+    Ok(filters)
+}
+
+fn scan_and_display(
+    scan_path: &std::path::Path,
+    sort: &SortBy,
+    json: bool,
+    filters: &[filter::ProjectFilter],
+) -> Result<()> {
     let project_paths = scanner::discover_projects(scan_path)?;
 
     if project_paths.is_empty() {
@@ -99,6 +125,8 @@ fn scan_and_display(scan_path: &std::path::Path, sort: &SortBy, json: bool) -> R
             Err(e) => eprintln!("  Warning: skipping {}: {}", path.display(), e),
         }
     }
+
+    let mut statuses = filter::apply_filters(statuses, filters);
 
     sort_statuses(&mut statuses, sort);
 
@@ -128,13 +156,15 @@ fn main() -> Result<()> {
         std::env::current_dir()?.join(&cli.path)
     };
 
+    let filters = parse_filters(&cli.filter)?;
+
     if cli.tui {
         tui::run_tui(&scan_path)?;
     } else if cli.watch {
-        watch::run_watch_loop(&scan_path, &cli.sort, cli.json, cli.interval)?;
+        watch::run_watch_loop(&scan_path, &cli.sort, cli.json, cli.interval, &filters)?;
     } else {
         println!("Scanning {}...\n", scan_path.display());
-        scan_and_display(&scan_path, &cli.sort, cli.json)?;
+        scan_and_display(&scan_path, &cli.sort, cli.json, &filters)?;
     }
 
     Ok(())

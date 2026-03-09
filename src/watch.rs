@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use chrono::Local;
 
 use crate::SortBy;
+use crate::filter::ProjectFilter;
 
 /// Clear the terminal screen and move cursor to top-left.
 fn clear_screen() -> Result<()> {
@@ -52,6 +53,7 @@ pub fn run_watch_loop(
     sort: &SortBy,
     json: bool,
     interval_secs: u64,
+    filters: &[ProjectFilter],
 ) -> Result<()> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_clone = Arc::clone(&stop);
@@ -66,7 +68,7 @@ pub fn run_watch_loop(
         print!("{}", format_watch_header(scan_path, interval_secs));
         io::stdout().flush().context("Failed to flush stdout")?;
 
-        crate::scan_and_display(scan_path, sort, json)?;
+        crate::scan_and_display(scan_path, sort, json, filters)?;
 
         if interruptible_sleep(Duration::from_secs(interval_secs), &stop) {
             println!("\nExiting watch mode.");
