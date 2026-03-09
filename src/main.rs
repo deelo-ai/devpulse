@@ -29,6 +29,10 @@ struct Cli {
     /// Sort projects by: activity (most stale first), name, or status
     #[arg(long, default_value = "activity")]
     sort: SortBy,
+
+    /// Output results as JSON instead of a table
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Clone, ValueEnum)]
@@ -90,7 +94,12 @@ fn main() -> Result<()> {
         }
     }
 
-    table::print_table(&statuses);
+    if cli.json {
+        let json = serde_json::to_string_pretty(&statuses)?;
+        println!("{json}");
+    } else {
+        table::print_table(&statuses);
+    }
 
     Ok(())
 }
