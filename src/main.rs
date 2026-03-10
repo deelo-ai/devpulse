@@ -8,6 +8,7 @@ mod scanner;
 mod since;
 mod summary;
 mod table;
+pub mod theme;
 mod tui;
 mod types;
 mod watch;
@@ -104,6 +105,11 @@ struct Cli {
     /// By default, devpulse queries GitHub Actions for projects with GitHub remotes.
     #[arg(long)]
     no_ci: bool,
+
+    /// Color theme: default, dracula, catppuccin-mocha, nord.
+    /// Can also be set via `theme` in .devpulse.toml.
+    #[arg(long, value_name = "THEME")]
+    theme: Option<String>,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -163,6 +169,7 @@ fn scan_and_display(
     include_empty: bool,
     use_color: bool,
     no_ci: bool,
+    theme: &theme::Theme,
 ) -> Result<()> {
     let project_paths = scanner::discover_projects_with_depth(scan_path, ignore, depth)?;
 
@@ -212,11 +219,11 @@ fn scan_and_display(
     sort_statuses(&mut statuses, sort);
 
     if group_by_parent {
-        write_grouped_output(statuses, format, output, use_color)?;
+        write_grouped_output(statuses, format, output, use_color, theme)?;
     } else if let Some(output_path) = output {
         export::write_output_to_file(&statuses, format, output_path)?;
     } else {
-        export::write_output(&statuses, format, use_color)?;
+        export::write_output(&statuses, format, use_color, theme)?;
     }
 
     Ok(())
@@ -228,6 +235,7 @@ fn write_grouped_output(
     format: &export::OutputFormat,
     output: Option<&std::path::Path>,
     use_color: bool,
+    theme: &theme::Theme,
 ) -> Result<()> {
     let groups = group::group_by_parent(statuses);
     let normalized = format.normalized();
@@ -267,7 +275,7 @@ fn write_grouped_output(
             // For table, print with colors
             for g in &groups {
                 println!("\n── {} ──\n", g.label);
-                crate::table::print_table(&g.projects);
+                crate::table::print_table(&g.projects, theme);
                 g.summary.print_colored();
                 println!();
             }
@@ -336,11 +344,15 @@ fn main() -> Result<()> {
 
     let use_color = config::resolve_color(cli.no_color, &cfg);
 
+    // Resolve theme: --theme flag > config theme > default
+    let theme_name = cli.theme.as_deref().or(cfg.theme.as_deref());
+    let active_theme = theme::resolve_theme(theme_name)?;
+
     let ignore = &cfg.ignore;
 
     if cli.tui {
         // TUI mode uses first scan path
-        tui::run_tui(scan_paths.first().unwrap_or(&scan_path))?;
+        tui::run_tui(scan_paths.first().unwrap_or(&scan_path), &active_theme)?;
     } else if cli.watch {
         watch::run_watch_loop(
             scan_paths.first().unwrap_or(&scan_path),
@@ -350,6 +362,7 @@ fn main() -> Result<()> {
             &filters,
             depth,
             use_color,
+            &active_theme,
         )?;
     } else {
         for path in &scan_paths {
@@ -367,6 +380,7 @@ fn main() -> Result<()> {
                 cli.include_empty,
                 use_color,
                 cli.no_ci,
+                &active_theme,
             )?;
         }
     }

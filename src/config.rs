@@ -23,6 +23,8 @@ pub struct Config {
     /// Whether to enable colored output (default: true).
     /// Set to `false` to disable ANSI colors.
     pub color: Option<bool>,
+    /// Color theme name (e.g. "dracula", "catppuccin-mocha", "nord").
+    pub theme: Option<String>,
 }
 
 /// Locate and load a `.devpulse.toml` config file.
@@ -522,5 +524,21 @@ scan_paths = "should-be-array"
 
             restore_no_color(saved);
         }
+    }
+
+    #[test]
+    fn test_parse_config_with_theme() {
+        let dir = tempfile::tempdir().unwrap();
+        write_temp_config(dir.path(), "theme = \"dracula\"\n");
+        let config = load_config(dir.path()).unwrap();
+        assert_eq!(config.theme, Some("dracula".to_string()));
+    }
+
+    #[test]
+    fn test_parse_config_without_theme_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        write_temp_config(dir.path(), "sort = \"name\"\n");
+        let config = load_config(dir.path()).unwrap();
+        assert_eq!(config.theme, None);
     }
 }

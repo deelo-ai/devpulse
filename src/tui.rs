@@ -9,10 +9,11 @@ use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
 
+use crate::theme::Theme;
 use crate::types::ProjectStatus;
 use crate::{git, scanner};
 
@@ -153,15 +154,15 @@ fn format_relative_time(dt: chrono::DateTime<chrono::Utc>) -> String {
 }
 
 /// Render the TUI frame.
-fn render(frame: &mut ratatui::Frame, app: &mut App) {
+fn render(frame: &mut ratatui::Frame, app: &mut App, theme: &Theme) {
     let chunks = Layout::vertical([Constraint::Min(5), Constraint::Length(3)]).split(frame.area());
 
-    render_table(frame, app, chunks[0]);
-    render_footer(frame, app, chunks[1]);
+    render_table(frame, app, chunks[0], theme);
+    render_footer(frame, app, chunks[1], theme);
 }
 
 /// Render the project table.
-fn render_table(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
+fn render_table(frame: &mut ratatui::Frame, app: &mut App, area: Rect, theme: &Theme) {
     let header_cells = [
         "Project",
         "Branch",
@@ -175,7 +176,7 @@ fn render_table(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
     .map(|h| {
         Cell::from(*h).style(
             Style::default()
-                .fg(Color::Cyan)
+                .fg(theme.accent.to_ratatui())
                 .add_modifier(Modifier::BOLD),
         )
     });
@@ -183,9 +184,9 @@ fn render_table(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
     let rows = app.statuses.iter().map(|s| {
         let status_style = if s.is_clean {
-            Style::default().fg(Color::Green)
+            Style::default().fg(theme.clean.to_ratatui())
         } else {
-            Style::default().fg(Color::Yellow)
+            Style::default().fg(theme.dirty.to_ratatui())
         };
 
         let last_commit_str = match s.last_commit {
@@ -231,7 +232,7 @@ fn render_table(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
         )
         .row_highlight_style(
             Style::default()
-                .bg(Color::DarkGray)
+                .bg(theme.highlight_bg.to_ratatui())
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("► ");
@@ -240,7 +241,7 @@ fn render_table(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
 }
 
 /// Render the footer with key hints and selected project info.
-fn render_footer(frame: &mut ratatui::Frame, app: &App, area: Rect) {
+fn render_footer(frame: &mut ratatui::Frame, app: &App, area: Rect, theme: &Theme) {
     let selected_info = match app.selected_project() {
         Some(p) => match &p.remote_url {
             Some(url) => format!("  {}  │  {}", p.name, url),
@@ -253,25 +254,25 @@ fn render_footer(frame: &mut ratatui::Frame, app: &App, area: Rect) {
         Span::styled(
             " ↑↓ ",
             Style::default()
-                .fg(Color::Cyan)
+                .fg(theme.accent.to_ratatui())
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw("Navigate  "),
         Span::styled(
             " Enter ",
             Style::default()
-                .fg(Color::Cyan)
+                .fg(theme.accent.to_ratatui())
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw("Open URL  "),
         Span::styled(
             " q ",
             Style::default()
-                .fg(Color::Cyan)
+                .fg(theme.accent.to_ratatui())
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw("Quit"),
-        Span::styled(&selected_info, Style::default().fg(Color::DarkGray)),
+        Span::styled(&selected_info, Style::default().fg(theme.dim.to_ratatui())),
     ]))
     .block(Block::default().borders(Borders::ALL));
 
@@ -303,7 +304,7 @@ fn handle_event(app: &mut App) -> Result<bool> {
 }
 
 /// Run the interactive TUI.
-pub fn run_tui(scan_path: &Path) -> Result<()> {
+pub fn run_tui(scan_path: &Path, theme: &Theme) -> Result<()> {
     let statuses = scan_projects(scan_path)?;
 
     if statuses.is_empty() {
@@ -329,7 +330,7 @@ pub fn run_tui(scan_path: &Path) -> Result<()> {
     // Main loop
     let result = (|| -> Result<()> {
         loop {
-            terminal.draw(|f| render(f, &mut app))?;
+            terminal.draw(|f| render(f, &mut app, theme))?;
             if !handle_event(&mut app)? {
                 break;
             }

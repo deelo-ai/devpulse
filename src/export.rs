@@ -193,12 +193,13 @@ pub fn write_output(
     statuses: &[ProjectStatus],
     format: &OutputFormat,
     use_color: bool,
+    theme: &crate::theme::Theme,
 ) -> Result<()> {
     let normalized = format.normalized();
     match normalized {
         OutputFormat::Table => {
             if use_color {
-                crate::table::print_table(statuses);
+                crate::table::print_table(statuses, theme);
                 let summary = Summary::from_statuses(statuses);
                 summary.print_colored();
             } else {

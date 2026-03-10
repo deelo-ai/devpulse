@@ -49,6 +49,7 @@ pub fn interruptible_sleep(duration: Duration, stop: &AtomicBool) -> bool {
 }
 
 /// Run the watch loop: scan, display, sleep, repeat until Ctrl+C.
+#[allow(clippy::too_many_arguments)]
 pub fn run_watch_loop(
     scan_path: &Path,
     sort: &SortBy,
@@ -57,6 +58,7 @@ pub fn run_watch_loop(
     filters: &[ProjectFilter],
     depth: u32,
     use_color: bool,
+    theme: &crate::theme::Theme,
 ) -> Result<()> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_clone = Arc::clone(&stop);
@@ -84,6 +86,7 @@ pub fn run_watch_loop(
             false,
             use_color,
             false, // CI enabled in watch mode
+            theme,
         )?;
 
         if interruptible_sleep(Duration::from_secs(interval_secs), &stop) {

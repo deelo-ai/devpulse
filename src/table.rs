@@ -1,14 +1,15 @@
 use chrono::Utc;
-use crossterm::style::{Color, Stylize};
+use crossterm::style::Stylize;
 
 use crate::git::truncate_message;
+use crate::theme::Theme;
 use crate::types::ProjectStatus;
 
 /// Maximum display width for commit messages in the table.
 const MESSAGE_MAX_LEN: usize = 50;
 
 /// Print a colored table of project statuses.
-pub fn print_table(statuses: &[ProjectStatus]) {
+pub fn print_table(statuses: &[ProjectStatus], theme: &Theme) {
     if statuses.is_empty() {
         println!("No projects found.");
         return;
@@ -49,7 +50,7 @@ pub fn print_table(statuses: &[ProjectStatus]) {
         branch_w = branch_width,
         ci_h = ci_header,
     );
-    println!("{}", header.bold());
+    println!("{}", header.bold().with(theme.header.to_crossterm()));
     let ci_width = if show_ci { 4 } else { 0 };
     println!(
         "  {}",
@@ -63,9 +64,9 @@ pub fn print_table(statuses: &[ProjectStatus]) {
     for s in statuses {
         let status_str = if s.is_clean { "clean" } else { "dirty" };
         let status_colored = if s.is_clean {
-            format!("{:>8}", status_str).with(Color::Green)
+            format!("{:>8}", status_str).with(theme.clean.to_crossterm())
         } else {
-            format!("{:>8}", status_str).with(Color::Yellow)
+            format!("{:>8}", status_str).with(theme.dirty.to_crossterm())
         };
 
         let last_commit_str = match s.last_commit {
@@ -78,21 +79,21 @@ pub fn print_table(statuses: &[ProjectStatus]) {
                 let days = (now - dt).num_days();
                 let text = format!("{:>14}", last_commit_str);
                 if days < 7 {
-                    text.with(Color::Green)
+                    text.with(theme.clean.to_crossterm())
                 } else if days < 30 {
-                    text.with(Color::Yellow)
+                    text.with(theme.dirty.to_crossterm())
                 } else {
-                    text.with(Color::Red)
+                    text.with(theme.stale.to_crossterm())
                 }
             }
-            None => format!("{:>14}", last_commit_str).with(Color::DarkGrey),
+            None => format!("{:>14}", last_commit_str).with(theme.dim.to_crossterm()),
         };
 
         let changed_str = format!("{:>7}", s.changed_files);
         let changed_colored = if s.changed_files == 0 {
-            changed_str.with(Color::Green)
+            changed_str.with(theme.clean.to_crossterm())
         } else {
-            changed_str.with(Color::Yellow)
+            changed_str.with(theme.dirty.to_crossterm())
         };
 
         let ahead_behind = if s.ahead == 0 && s.behind == 0 {
@@ -107,9 +108,9 @@ pub fn print_table(statuses: &[ProjectStatus]) {
             format!("{}", s.stash_count)
         };
         let stash_colored = if s.stash_count == 0 {
-            format!("{:>5}", stash_str).with(Color::DarkGrey)
+            format!("{:>5}", stash_str).with(theme.dim.to_crossterm())
         } else {
-            format!("{:>5}", stash_str).with(Color::Cyan)
+            format!("{:>5}", stash_str).with(theme.accent.to_crossterm())
         };
 
         let message_str = match &s.last_commit_message {
@@ -117,8 +118,8 @@ pub fn print_table(statuses: &[ProjectStatus]) {
             None => "—".to_string(),
         };
         let message_colored = match &s.last_commit_message {
-            Some(_) => message_str.with(Color::White),
-            None => message_str.with(Color::DarkGrey),
+            Some(_) => message_str.with(theme.header.to_crossterm()),
+            None => message_str.with(theme.dim.to_crossterm()),
         };
 
         let ci_col = if show_ci {

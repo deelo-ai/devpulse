@@ -1525,3 +1525,107 @@ fn test_parallel_scanning_deterministic_order() {
         );
     }
 }
+
+// ── Theme integration tests ─────────────────────────────────────────
+
+#[test]
+fn test_theme_flag_dracula() {
+    let dir = TempDir::new().unwrap();
+    let repo_dir = dir.path().join("myapp");
+    fs::create_dir(&repo_dir).unwrap();
+    init_repo(&repo_dir);
+    // Run without NO_COLOR so we get themed ANSI output
+    let output = Command::new(devpulse_bin())
+        .args(["--theme", "dracula", dir.path().to_str().unwrap()])
+        .output()
+        .expect("failed to run devpulse");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout.contains("myapp"));
+}
+
+#[test]
+fn test_theme_flag_catppuccin() {
+    let dir = TempDir::new().unwrap();
+    let repo_dir = dir.path().join("app");
+    fs::create_dir(&repo_dir).unwrap();
+    init_repo(&repo_dir);
+    let output = Command::new(devpulse_bin())
+        .args(["--theme", "catppuccin-mocha", dir.path().to_str().unwrap()])
+        .output()
+        .expect("failed to run devpulse");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn test_theme_flag_nord() {
+    let dir = TempDir::new().unwrap();
+    let repo_dir = dir.path().join("app");
+    fs::create_dir(&repo_dir).unwrap();
+    init_repo(&repo_dir);
+    let output = Command::new(devpulse_bin())
+        .args(["--theme", "nord", dir.path().to_str().unwrap()])
+        .output()
+        .expect("failed to run devpulse");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn test_theme_flag_invalid() {
+    let dir = TempDir::new().unwrap();
+    let (_, stderr, success) =
+        run_devpulse(&["--theme", "solarized", dir.path().to_str().unwrap()]);
+    assert!(!success, "Should fail with invalid theme");
+    assert!(stderr.contains("Unknown theme") || stderr.contains("solarized"));
+}
+
+#[test]
+fn test_theme_from_config_file() {
+    let dir = TempDir::new().unwrap();
+    let repo_dir = dir.path().join("configured");
+    fs::create_dir(&repo_dir).unwrap();
+    init_repo(&repo_dir);
+    fs::write(dir.path().join(".devpulse.toml"), "theme = \"nord\"\n").unwrap();
+    let output = Command::new(devpulse_bin())
+        .args([dir.path().to_str().unwrap()])
+        .output()
+        .expect("failed to run devpulse");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout.contains("configured"));
+}
+
+#[test]
+fn test_theme_cli_overrides_config() {
+    let dir = TempDir::new().unwrap();
+    let repo_dir = dir.path().join("overridden");
+    fs::create_dir(&repo_dir).unwrap();
+    init_repo(&repo_dir);
+    fs::write(dir.path().join(".devpulse.toml"), "theme = \"nord\"\n").unwrap();
+    // CLI --theme dracula should override config's nord
+    let output = Command::new(devpulse_bin())
+        .args(["--theme", "dracula", dir.path().to_str().unwrap()])
+        .output()
+        .expect("failed to run devpulse");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
