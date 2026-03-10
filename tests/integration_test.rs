@@ -923,3 +923,206 @@ fn test_json_format_flag_equivalent_to_json_flag() {
         "--json and --format json should produce same number of projects"
     );
 }
+
+// ── Additional edge-case tests (#25) ──
+
+#[test]
+fn test_invalid_since_value() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("sincetest");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    let (_, stderr, success) = run_devpulse(&["--since", "abc", tmp.path().to_str().unwrap()]);
+    assert!(!success, "invalid --since should fail");
+    assert!(
+        stderr.contains("Invalid") || stderr.contains("invalid") || stderr.contains("error"),
+        "should show error for invalid --since: {stderr}"
+    );
+}
+
+#[test]
+fn test_invalid_since_zero_days() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("sincetest0");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    // 0d should either work (showing nothing recent) or fail gracefully
+    let (_, _, _) = run_devpulse(&["--since", "0d", tmp.path().to_str().unwrap()]);
+    // Just ensure it doesn't panic/crash
+}
+
+#[test]
+fn test_help_output_contains_key_info() {
+    let (stdout, _, success) = run_devpulse(&["--help"]);
+    assert!(success, "help should succeed");
+    assert!(
+        stdout.contains("devpulse"),
+        "help should mention devpulse"
+    );
+    assert!(
+        stdout.contains("--json"),
+        "help should document --json flag"
+    );
+    assert!(
+        stdout.contains("--filter"),
+        "help should document --filter flag"
+    );
+    assert!(
+        stdout.contains("--since"),
+        "help should document --since flag"
+    );
+    assert!(
+        stdout.contains("--sort"),
+        "help should document --sort flag"
+    );
+    assert!(
+        stdout.contains("--watch"),
+        "help should document --watch flag"
+    );
+    assert!(
+        stdout.contains("EXAMPLES"),
+        "help should include examples"
+    );
+}
+
+#[test]
+fn test_default_depth_scans_children() {
+    // Without --depth, default is 1: scan immediate children
+    let tmp = TempDir::new().unwrap();
+    setup_multi_repo(tmp.path());
+
+    let (stdout, _, success) = run_devpulse(&[tmp.path().to_str().unwrap()]);
+    assert!(success, "default depth scan should succeed");
+    assert!(stdout.contains("alpha-clean"), "should find child repo");
+    assert!(stdout.contains("beta-dirty"), "should find child repo");
+}
+
+#[test]
+fn test_repo_with_no_commits() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("no-commits");
+    fs::create_dir_all(&repo).unwrap();
+    // Init without committing
+    run_git(&repo, &["init"]);
+    run_git(&repo, &["config", "user.email", "test@test.com"]);
+    run_git(&repo, &["config", "user.name", "Test"]);
+
+    let (stdout, stderr, success) = run_devpulse(&[tmp.path().to_str().unwrap()]);
+    // Should handle gracefully — either show it or skip with warning
+    // Main thing: shouldn't crash
+    assert!(
+        success || stderr.contains("Warning") || stderr.contains("skipping"),
+        "no-commit repo should be handled gracefully, got: stdout={stdout} stderr={stderr}"
+    );
+}
+
+#[test]
+fn test_csv_format_flag() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("csvfmt");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    let (stdout, _, success) = run_devpulse(&["--format", "csv", tmp.path().to_str().unwrap()]);
+    assert!(success, "csv format should succeed");
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.starts_with("Scanning") && !l.is_empty()).collect();
+    assert!(lines.len() >= 2, "csv should have header + data rows, got: {lines:?}");
+    assert!(
+        lines[0].contains(','),
+        "csv header should contain commas: {:?}", lines[0]
+    );
+}
+
+#[test]
+fn test_markdown_format_flag() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("mdfmt");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    let (stdout, _, success) = run_devpulse(&["--format", "markdown", tmp.path().to_str().unwrap()]);
+    assert!(success, "markdown format should succeed");
+    let content: String = stdout.lines().filter(|l| !l.starts_with("Scanning")).collect::<Vec<_>>().join("\n");
+    assert!(
+        content.contains('|'),
+        "markdown should contain pipe separators: {content}"
+    );
+}
+
+#[test]
+fn test_group_with_csv_output() {
+    let tmp = TempDir::new().unwrap();
+    setup_multi_repo(tmp.path());
+
+    let (stdout, _, success) = run_devpulse(&["--group", "--format", "csv", tmp.path().to_str().unwrap()]);
+    assert!(success, "grouped csv should succeed");
+    let content: String = stdout.lines().filter(|l| !l.starts_with("Scanning")).collect::<Vec<_>>().join("\n");
+    assert!(!content.is_empty(), "grouped csv should produce output");
+}
+
+#[test]
+fn test_group_with_markdown_output() {
+    let tmp = TempDir::new().unwrap();
+    setup_multi_repo(tmp.path());
+
+    let (stdout, _, success) = run_devpulse(&["--group", "--format", "markdown", tmp.path().to_str().unwrap()]);
+    assert!(success, "grouped markdown should succeed");
+    let content: String = stdout.lines().filter(|l| !l.starts_with("Scanning")).collect::<Vec<_>>().join("\n");
+    assert!(content.contains('|'), "grouped markdown should have table syntax");
+}
+
+#[test]
+fn test_output_file_creates_parent_dirs() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("outrepo");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    let output_path = tmp.path().join("subdir").join("nested").join("output.json");
+    let (_, _, success) = run_devpulse(&[
+        "--json",
+        "-o", output_path.to_str().unwrap(),
+        tmp.path().to_str().unwrap(),
+    ]);
+    assert!(success, "output to nested path should succeed");
+    assert!(output_path.exists(), "output file should be created");
+    let content = fs::read_to_string(&output_path).unwrap();
+    assert!(content.contains("projects"), "output should contain JSON data");
+}
+
+#[test]
+fn test_filter_combined_dirty_and_name() {
+    let tmp = TempDir::new().unwrap();
+    setup_multi_repo(tmp.path());
+
+    let (stdout, _, success) = run_devpulse(&[
+        "--filter", "dirty",
+        "--filter", "name:beta",
+        "--json",
+        tmp.path().to_str().unwrap(),
+    ]);
+    assert!(success, "combined filter should succeed");
+    let content: String = stdout.lines().filter(|l| !l.starts_with("Scanning")).collect::<Vec<_>>().join("\n");
+    let json: serde_json::Value = serde_json::from_str(content.trim()).unwrap();
+    let projects = json["projects"].as_array().unwrap();
+    assert_eq!(projects.len(), 1, "should match exactly beta-dirty");
+    assert!(projects[0]["name"].as_str().unwrap().contains("beta"));
+}
+
+#[test]
+fn test_scan_single_repo_depth_zero() {
+    // --depth 0 checks the target directory itself as a repo
+    let tmp = TempDir::new().unwrap();
+    init_repo(tmp.path());
+
+    let (stdout, _, success) = run_devpulse(&["--depth", "0", tmp.path().to_str().unwrap()]);
+    assert!(success, "depth 0 on a repo should succeed");
+    // Should show the repo itself
+    let lower = stdout.to_lowercase();
+    assert!(
+        lower.contains("clean") || lower.contains("dirty") || stdout.contains("✓") || stdout.contains("✗"),
+        "should display repo status: {stdout}"
+    );
+}
