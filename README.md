@@ -1,5 +1,9 @@
 # devpulse
 
+[![CI](https://github.com/deelo-ai/devpulse/actions/workflows/ci.yml/badge.svg)](https://github.com/deelo-ai/devpulse/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/dev-pulse)](https://crates.io/crates/dev-pulse)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 **Project health dashboard for your terminal.**
 
 Scan a directory of projects and instantly see the health of each one — git status, last activity, stale repos, dirty worktrees — all in a colored terminal table.
@@ -12,10 +16,13 @@ If you work on multiple projects, it's easy to lose track of which repos have un
 
 ## Installation
 
-### Homebrew (macOS / Linux)
+### From source
 
 ```bash
-brew install deelo-ai/tap/devpulse
+git clone https://github.com/deelo-ai/devpulse.git
+cd devpulse
+cargo build --release
+# Binary at target/release/devpulse
 ```
 
 ### From crates.io
@@ -26,15 +33,13 @@ cargo install dev-pulse
 
 ### Pre-built binaries
 
-Pre-built binaries will be available from [GitHub Releases](https://github.com/deelo-ai/devpulse/releases) once v0.1.0 is tagged.
+Download from [GitHub Releases](https://github.com/deelo-ai/devpulse/releases) — available for Linux (x86_64, aarch64) and macOS (x86_64, Apple Silicon).
 
-For now, build from source:
+### Homebrew (macOS / Linux)
 
 ```bash
-git clone https://github.com/deelo-ai/devpulse.git
-cd devpulse
-cargo build --release
-# Binary at target/release/devpulse
+brew tap deelo-ai/tap
+brew install devpulse
 ```
 
 
@@ -242,14 +247,6 @@ theme = "dracula"
 ```
 
 CLI flags always take priority over config file values.
-
-## Building from Source
-
-```bash
-git clone https://github.com/deelo-ai/devpulse.git
-cd devpulse
-cargo build --release
-```
 
 ## Contributing
 
