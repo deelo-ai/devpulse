@@ -56,6 +56,7 @@ pub fn run_watch_loop(
     interval_secs: u64,
     filters: &[ProjectFilter],
     depth: u32,
+    use_color: bool,
 ) -> Result<()> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_clone = Arc::clone(&stop);
@@ -81,6 +82,7 @@ pub fn run_watch_loop(
             false,
             None,
             false,
+            use_color,
         )?;
 
         if interruptible_sleep(Duration::from_secs(interval_secs), &stop) {

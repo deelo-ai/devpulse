@@ -92,6 +92,12 @@ struct Cli {
     /// By default, projects with no commit history are excluded.
     #[arg(long)]
     include_empty: bool,
+
+    /// Disable colored output. Also respects the NO_COLOR environment variable
+    /// and `color = false` in .devpulse.toml.
+    /// Priority: --no-color flag > NO_COLOR env > config > default (colors on).
+    #[arg(long)]
+    no_color: bool,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -149,6 +155,7 @@ fn scan_and_display(
     group_by_parent: bool,
     since_duration: Option<&since::SinceDuration>,
     include_empty: bool,
+    use_color: bool,
 ) -> Result<()> {
     let project_paths = scanner::discover_projects_with_depth(scan_path, ignore, depth)?;
 
@@ -179,11 +186,11 @@ fn scan_and_display(
     sort_statuses(&mut statuses, sort);
 
     if group_by_parent {
-        write_grouped_output(statuses, format, output)?;
+        write_grouped_output(statuses, format, output, use_color)?;
     } else if let Some(output_path) = output {
         export::write_output_to_file(&statuses, format, output_path)?;
     } else {
-        export::write_output(&statuses, format)?;
+        export::write_output(&statuses, format, use_color)?;
     }
 
     Ok(())
@@ -194,6 +201,7 @@ fn write_grouped_output(
     statuses: Vec<types::ProjectStatus>,
     format: &export::OutputFormat,
     output: Option<&std::path::Path>,
+    use_color: bool,
 ) -> Result<()> {
     let groups = group::group_by_parent(statuses);
     let normalized = format.normalized();
@@ -229,12 +237,17 @@ fn write_grouped_output(
         std::fs::write(output_path, &content)?;
         eprintln!("Wrote grouped output to {}", output_path.display());
     } else if matches!(normalized, export::OutputFormat::Table) {
-        // For table, print with colors instead of the plain text version
-        for g in &groups {
-            println!("\n── {} ──\n", g.label);
-            crate::table::print_table(&g.projects);
-            g.summary.print_colored();
-            println!();
+        if use_color {
+            // For table, print with colors
+            for g in &groups {
+                println!("\n── {} ──\n", g.label);
+                crate::table::print_table(&g.projects);
+                g.summary.print_colored();
+                println!();
+            }
+        } else {
+            // Plain text, no ANSI
+            print!("{content}");
         }
     } else {
         print!("{content}");
@@ -295,6 +308,8 @@ fn main() -> Result<()> {
         None
     };
 
+    let use_color = config::resolve_color(cli.no_color, &cfg);
+
     let ignore = &cfg.ignore;
 
     if cli.tui {
@@ -308,6 +323,7 @@ fn main() -> Result<()> {
             cli.interval,
             &filters,
             depth,
+            use_color,
         )?;
     } else {
         for path in &scan_paths {
@@ -323,6 +339,7 @@ fn main() -> Result<()> {
                 cli.group,
                 since_duration.as_ref(),
                 cli.include_empty,
+                use_color,
             )?;
         }
     }

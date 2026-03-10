@@ -20,6 +20,9 @@ pub struct Config {
     pub format: Option<String>,
     /// Default `--since` duration (e.g. "30d", "2w", "1m").
     pub since: Option<String>,
+    /// Whether to enable colored output (default: true).
+    /// Set to `false` to disable ANSI colors.
+    pub color: Option<bool>,
 }
 
 /// Locate and load a `.devpulse.toml` config file.
@@ -103,6 +106,31 @@ pub fn resolve_scan_paths(config: &Config, base_dir: &Path) -> Vec<PathBuf> {
             }
         })
         .collect()
+}
+
+/// Resolve whether colored output should be used.
+///
+/// Priority (highest to lowest):
+/// 1. `cli_no_color` — the `--no-color` CLI flag (forces no color)
+/// 2. `NO_COLOR` environment variable (any non-empty value disables color, per <https://no-color.org/>)
+/// 3. `color` config option in `.devpulse.toml`
+/// 4. Default: color enabled
+pub fn resolve_color(cli_no_color: bool, cfg: &Config) -> bool {
+    if cli_no_color {
+        return false;
+    }
+
+    if let Ok(val) = std::env::var("NO_COLOR")
+        && !val.is_empty()
+    {
+        return false;
+    }
+
+    if let Some(color) = cfg.color {
+        return color;
+    }
+
+    true
 }
 
 #[cfg(test)]
@@ -368,5 +396,130 @@ scan_paths = "should-be-array"
 
         let result = load_config(dir.path());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_config_with_color_false() {
+        let dir = tempfile::tempdir().unwrap();
+        write_temp_config(dir.path(), "color = false\n");
+        let config = load_config(dir.path()).unwrap();
+        assert_eq!(config.color, Some(false));
+    }
+
+    #[test]
+    fn test_parse_config_with_color_true() {
+        let dir = tempfile::tempdir().unwrap();
+        write_temp_config(dir.path(), "color = true\n");
+        let config = load_config(dir.path()).unwrap();
+        assert_eq!(config.color, Some(true));
+    }
+
+    #[test]
+    fn test_parse_config_without_color_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        write_temp_config(dir.path(), "sort = \"name\"\n");
+        let config = load_config(dir.path()).unwrap();
+        assert_eq!(config.color, None);
+    }
+
+    /// Helper to save, set/remove NO_COLOR env var safely within tests.
+    /// SAFETY: These tests must run with `--test-threads=1` or accept
+    /// that env var manipulation is inherently racy in multi-threaded tests.
+    unsafe fn save_no_color() -> Option<String> {
+        std::env::var("NO_COLOR").ok()
+    }
+
+    unsafe fn restore_no_color(saved: Option<String>) {
+        unsafe {
+            if let Some(val) = saved {
+                std::env::set_var("NO_COLOR", val);
+            } else {
+                std::env::remove_var("NO_COLOR");
+            }
+        }
+    }
+
+    #[test]
+    fn test_resolve_color_default_is_true() {
+        unsafe {
+            let saved = save_no_color();
+            std::env::remove_var("NO_COLOR");
+
+            let cfg = Config::default();
+            assert!(resolve_color(false, &cfg));
+
+            restore_no_color(saved);
+        }
+    }
+
+    #[test]
+    fn test_resolve_color_cli_flag_overrides_all() {
+        let cfg = Config {
+            color: Some(true),
+            ..Config::default()
+        };
+        // --no-color should win even when config says color = true
+        assert!(!resolve_color(true, &cfg));
+    }
+
+    #[test]
+    fn test_resolve_color_config_false_disables() {
+        unsafe {
+            let saved = save_no_color();
+            std::env::remove_var("NO_COLOR");
+
+            let cfg = Config {
+                color: Some(false),
+                ..Config::default()
+            };
+            assert!(!resolve_color(false, &cfg));
+
+            restore_no_color(saved);
+        }
+    }
+
+    #[test]
+    fn test_resolve_color_config_true_enables() {
+        unsafe {
+            let saved = save_no_color();
+            std::env::remove_var("NO_COLOR");
+
+            let cfg = Config {
+                color: Some(true),
+                ..Config::default()
+            };
+            assert!(resolve_color(false, &cfg));
+
+            restore_no_color(saved);
+        }
+    }
+
+    #[test]
+    fn test_resolve_color_no_color_env_overrides_config() {
+        unsafe {
+            let saved = save_no_color();
+            std::env::set_var("NO_COLOR", "1");
+
+            let cfg = Config {
+                color: Some(true),
+                ..Config::default()
+            };
+            assert!(!resolve_color(false, &cfg));
+
+            restore_no_color(saved);
+        }
+    }
+
+    #[test]
+    fn test_resolve_color_empty_no_color_env_ignored() {
+        unsafe {
+            let saved = save_no_color();
+            std::env::set_var("NO_COLOR", "");
+
+            let cfg = Config::default();
+            assert!(resolve_color(false, &cfg));
+
+            restore_no_color(saved);
+        }
     }
 }

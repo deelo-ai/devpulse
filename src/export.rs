@@ -182,13 +182,22 @@ pub fn format_json(statuses: &[ProjectStatus]) -> Result<String> {
 }
 
 /// Write formatted output to stdout.
-pub fn write_output(statuses: &[ProjectStatus], format: &OutputFormat) -> Result<()> {
+pub fn write_output(
+    statuses: &[ProjectStatus],
+    format: &OutputFormat,
+    use_color: bool,
+) -> Result<()> {
     let normalized = format.normalized();
     match normalized {
         OutputFormat::Table => {
-            crate::table::print_table(statuses);
-            let summary = Summary::from_statuses(statuses);
-            summary.print_colored();
+            if use_color {
+                crate::table::print_table(statuses);
+                let summary = Summary::from_statuses(statuses);
+                summary.print_colored();
+            } else {
+                let plain = crate::table::format_table_plain(statuses);
+                print!("{plain}");
+            }
             println!();
             Ok(())
         }
