@@ -21,6 +21,7 @@ pub fn get_project_status(path: &Path) -> Result<ProjectStatus> {
     let last_commit = get_last_commit_time(&repo)?;
     let (ahead, behind) = get_ahead_behind(&repo);
     let remote_url = get_remote_url(&repo);
+    let stash_count = get_stash_count(&repo);
 
     Ok(ProjectStatus {
         name,
@@ -32,6 +33,7 @@ pub fn get_project_status(path: &Path) -> Result<ProjectStatus> {
         ahead,
         behind,
         remote_url,
+        stash_count,
     })
 }
 
@@ -109,6 +111,30 @@ pub fn normalize_remote_url(url: &str) -> String {
     url
 }
 
+/// Count the number of stash entries in the repository.
+fn get_stash_count(repo: &Repository) -> usize {
+    // git2's stash_foreach requires a mutable repo reference,
+    // so we re-open to avoid borrow issues with the caller.
+    let path = repo.workdir().or_else(|| Some(repo.path()));
+    let repo_path = match path {
+        Some(p) => p.to_path_buf(),
+        None => return 0,
+    };
+
+    let mut repo = match Repository::open(&repo_path) {
+        Ok(r) => r,
+        Err(_) => return 0,
+    };
+
+    let mut count: usize = 0;
+    // stash_foreach calls the callback for each stash entry
+    let _ = repo.stash_foreach(|_index, _message, _oid| {
+        count += 1;
+        true // continue iterating
+    });
+    count
+}
+
 /// Get ahead/behind counts relative to upstream tracking branch.
 fn get_ahead_behind(repo: &Repository) -> (usize, usize) {
     let result = (|| -> Result<(usize, usize)> {
@@ -131,6 +157,111 @@ fn get_ahead_behind(repo: &Repository) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
+    use tempfile::TempDir;
+
+    /// Helper: create a temporary git repo with an initial commit.
+    fn setup_temp_repo() -> (TempDir, Repository) {
+        let dir = TempDir::new().expect("Failed to create temp dir");
+        let repo = Repository::init(dir.path()).expect("Failed to init repo");
+
+        // Configure user for commits
+        let mut config = repo.config().expect("Failed to get config");
+        config
+            .set_str("user.name", "Test User")
+            .expect("Failed to set user.name");
+        config
+            .set_str("user.email", "test@example.com")
+            .expect("Failed to set user.email");
+
+        // Create an initial commit so HEAD exists
+        {
+            let sig = repo.signature().expect("Failed to create signature");
+            let tree_id = {
+                let mut index = repo.index().expect("Failed to get index");
+                index.write_tree().expect("Failed to write tree")
+            };
+            let tree = repo.find_tree(tree_id).expect("Failed to find tree");
+            repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
+                .expect("Failed to create initial commit");
+        }
+
+        (dir, repo)
+    }
+
+    #[test]
+    fn test_stash_count_empty_repo() {
+        let (_dir, repo) = setup_temp_repo();
+        assert_eq!(get_stash_count(&repo), 0);
+    }
+
+    #[test]
+    fn test_stash_count_with_stashes() {
+        let (dir, _repo) = setup_temp_repo();
+
+        // Create a file, add it, then stash
+        std::fs::write(dir.path().join("file.txt"), "hello").expect("write failed");
+        let status = Command::new("git")
+            .args(["add", "file.txt"])
+            .current_dir(dir.path())
+            .status()
+            .expect("git add failed");
+        assert!(status.success());
+
+        let status = Command::new("git")
+            .args(["stash", "push", "-m", "first stash"])
+            .current_dir(dir.path())
+            .status()
+            .expect("git stash failed");
+        assert!(status.success());
+
+        // Create another file and stash again
+        std::fs::write(dir.path().join("file2.txt"), "world").expect("write failed");
+        let status = Command::new("git")
+            .args(["add", "file2.txt"])
+            .current_dir(dir.path())
+            .status()
+            .expect("git add failed");
+        assert!(status.success());
+
+        let status = Command::new("git")
+            .args(["stash", "push", "-m", "second stash"])
+            .current_dir(dir.path())
+            .status()
+            .expect("git stash failed");
+        assert!(status.success());
+
+        let repo = Repository::open(dir.path()).expect("Failed to open repo");
+        assert_eq!(get_stash_count(&repo), 2);
+    }
+
+    #[test]
+    fn test_stash_count_after_pop() {
+        let (dir, _repo) = setup_temp_repo();
+
+        // Create, add, stash
+        std::fs::write(dir.path().join("file.txt"), "data").expect("write failed");
+        Command::new("git")
+            .args(["add", "file.txt"])
+            .current_dir(dir.path())
+            .status()
+            .expect("git add failed");
+        Command::new("git")
+            .args(["stash", "push", "-m", "to pop"])
+            .current_dir(dir.path())
+            .status()
+            .expect("git stash failed");
+
+        // Pop it
+        Command::new("git")
+            .args(["stash", "pop"])
+            .current_dir(dir.path())
+            .status()
+            .expect("git stash pop failed");
+
+        let repo = Repository::open(dir.path()).expect("Failed to open repo");
+        assert_eq!(get_stash_count(&repo), 0);
+    }
 
     #[test]
     fn test_normalize_ssh_url() {

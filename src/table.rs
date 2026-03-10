@@ -26,20 +26,21 @@ pub fn print_table(statuses: &[ProjectStatus]) {
 
     // Print header
     let header = format!(
-        "  {:<name_w$}  {:<branch_w$}  {:>8}  {:>7}  {:>14}  {}",
+        "  {:<name_w$}  {:<branch_w$}  {:>8}  {:>7}  {:>14}  {:>12}  {}",
         "Project",
         "Branch",
         "Status",
         "Changed",
         "Last Commit",
         "Ahead/Behind",
+        "Stash",
         name_w = name_width,
         branch_w = branch_width,
     );
     println!("{}", header.bold());
     println!(
         "  {}",
-        "─".repeat(name_width + branch_width + 8 + 7 + 14 + 12 + 12)
+        "─".repeat(name_width + branch_width + 8 + 7 + 14 + 12 + 8 + 14)
     );
 
     let now = Utc::now();
@@ -85,14 +86,26 @@ pub fn print_table(statuses: &[ProjectStatus]) {
             format!("↑{} ↓{}", s.ahead, s.behind)
         };
 
+        let stash_str = if s.stash_count == 0 {
+            "—".to_string()
+        } else {
+            format!("{}", s.stash_count)
+        };
+        let stash_colored = if s.stash_count == 0 {
+            format!("{:>5}", stash_str).with(Color::DarkGrey)
+        } else {
+            format!("{:>5}", stash_str).with(Color::Cyan)
+        };
+
         println!(
-            "  {:<name_w$}  {:<branch_w$}  {}  {}  {}  {}",
+            "  {:<name_w$}  {:<branch_w$}  {}  {}  {}  {:>12}  {}",
             s.name,
             s.branch,
             status_colored,
             changed_colored,
             last_commit_colored,
             ahead_behind,
+            stash_colored,
             name_w = name_width,
             branch_w = branch_width,
         );

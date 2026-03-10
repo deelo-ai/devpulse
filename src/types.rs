@@ -25,4 +25,6 @@ pub struct ProjectStatus {
     pub behind: usize,
     /// Remote URL (e.g. GitHub URL) if available
     pub remote_url: Option<String>,
+    /// Number of stash entries
+    pub stash_count: usize,
 }
