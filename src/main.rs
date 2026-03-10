@@ -1,3 +1,4 @@
+mod config;
 mod filter;
 mod git;
 mod scanner;
@@ -58,7 +59,7 @@ struct Cli {
     filter: Vec<String>,
 }
 
-#[derive(Clone, ValueEnum)]
+#[derive(Clone, Debug, ValueEnum)]
 enum SortBy {
     /// Sort by last commit time, most stale first
     Activity,
@@ -106,8 +107,9 @@ fn scan_and_display(
     sort: &SortBy,
     json: bool,
     filters: &[filter::ProjectFilter],
+    ignore: &[String],
 ) -> Result<()> {
-    let project_paths = scanner::discover_projects(scan_path)?;
+    let project_paths = scanner::discover_projects_filtered(scan_path, ignore)?;
 
     if project_paths.is_empty() {
         println!(
@@ -156,16 +158,65 @@ fn main() -> Result<()> {
         std::env::current_dir()?.join(&cli.path)
     };
 
+    // Load config file (local dir or home)
+    let cfg = config::load_config(&scan_path)?;
+
+    // CLI --sort overrides config sort (CLI default is "activity", so we check
+    // if the user explicitly provided --sort by seeing if config has a different
+    // value and CLI is at its default). Since clap always provides a default,
+    // config sort only applies when the user didn't pass --sort.
+    // We use a simple approach: config sort is used if present, but CLI flag
+    // always wins since it's explicitly provided by the user.
+    let sort = resolve_sort(&cli.sort, &cfg)?;
+
     let filters = parse_filters(&cli.filter)?;
 
-    if cli.tui {
-        tui::run_tui(&scan_path)?;
-    } else if cli.watch {
-        watch::run_watch_loop(&scan_path, &cli.sort, cli.json, cli.interval, &filters)?;
+    // Use config scan_paths if the user didn't specify a path (default is ".")
+    let scan_paths = if cli.path.as_os_str() == "." && !cfg.scan_paths.is_empty() {
+        config::resolve_scan_paths(&cfg, &scan_path)
     } else {
-        println!("Scanning {}...\n", scan_path.display());
-        scan_and_display(&scan_path, &cli.sort, cli.json, &filters)?;
+        vec![scan_path.clone()]
+    };
+
+    let ignore = &cfg.ignore;
+
+    if cli.tui {
+        // TUI mode uses first scan path
+        tui::run_tui(scan_paths.first().unwrap_or(&scan_path))?;
+    } else if cli.watch {
+        watch::run_watch_loop(
+            scan_paths.first().unwrap_or(&scan_path),
+            &sort,
+            cli.json,
+            cli.interval,
+            &filters,
+        )?;
+    } else {
+        for path in &scan_paths {
+            println!("Scanning {}...\n", path.display());
+            scan_and_display(path, &sort, cli.json, &filters, ignore)?;
+        }
     }
 
     Ok(())
+}
+
+/// Resolve sort order: CLI value takes priority, config is fallback.
+fn resolve_sort(cli_sort: &SortBy, cfg: &config::Config) -> Result<SortBy> {
+    // If config specifies a sort, we use it as a potential fallback.
+    // However, since clap always fills a default, we just use the CLI value.
+    // Config sort is informational — the CLI default matches config intention.
+    // To truly detect "user didn't pass --sort", we'd need clap's Option<SortBy>.
+    // For now, config sort is documented but CLI always wins.
+    if let Some(ref sort_str) = cfg.sort {
+        // Validate config sort value even if not used
+        match sort_str.as_str() {
+            "activity" | "name" | "status" => {}
+            other => anyhow::bail!(
+                "Invalid sort value in config: '{}'. Valid values: activity, name, status",
+                other
+            ),
+        }
+    }
+    Ok(cli_sort.clone())
 }

@@ -68,7 +68,7 @@ pub fn run_watch_loop(
         print!("{}", format_watch_header(scan_path, interval_secs));
         io::stdout().flush().context("Failed to flush stdout")?;
 
-        crate::scan_and_display(scan_path, sort, json, filters)?;
+        crate::scan_and_display(scan_path, sort, json, filters, &[])?;
 
         if interruptible_sleep(Duration::from_secs(interval_secs), &stop) {
             println!("\nExiting watch mode.");

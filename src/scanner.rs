@@ -5,8 +5,13 @@ use anyhow::{Context, Result};
 
 /// Discover projects by looking for directories containing .git folders.
 /// Only checks top-level entries (not recursive beyond 1 level).
-/// Skips hidden directories (starting with .).
+/// Skips hidden directories (starting with .) and any names in `ignore`.
 pub fn discover_projects(dir: &Path) -> Result<Vec<PathBuf>> {
+    discover_projects_filtered(dir, &[])
+}
+
+/// Discover projects, skipping directories whose names match any entry in `ignore`.
+pub fn discover_projects_filtered(dir: &Path, ignore: &[String]) -> Result<Vec<PathBuf>> {
     let mut projects = Vec::new();
 
     let entries = fs::read_dir(dir)
@@ -27,6 +32,11 @@ pub fn discover_projects(dir: &Path) -> Result<Vec<PathBuf>> {
             None => continue,
         };
         if name.starts_with('.') {
+            continue;
+        }
+
+        // Skip ignored directory names
+        if ignore.iter().any(|ig| ig == &name) {
             continue;
         }
 

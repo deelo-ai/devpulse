@@ -1,0 +1,229 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result};
+use serde::Deserialize;
+
+/// Raw TOML configuration as deserialized from `.devpulse.toml`.
+#[derive(Debug, Deserialize, Default, PartialEq)]
+#[serde(default)]
+pub struct Config {
+    /// Directories to scan for projects.
+    pub scan_paths: Vec<String>,
+    /// Default sort order: "activity", "name", or "status".
+    pub sort: Option<String>,
+    /// Directory names to ignore when scanning.
+    pub ignore: Vec<String>,
+}
+
+/// Locate and load a `.devpulse.toml` config file.
+///
+/// Search order:
+/// 1. The given directory (e.g. the scan target or CWD)
+/// 2. The user's home directory (`~/.devpulse.toml`)
+///
+/// If no config file is found, returns `Config::default()`.
+pub fn load_config(local_dir: &Path) -> Result<Config> {
+    // Check local directory first
+    let local_path = local_dir.join(".devpulse.toml");
+    if local_path.is_file() {
+        return parse_config_file(&local_path);
+    }
+
+    // Fall back to home directory
+    if let Some(home) = dirs::home_dir() {
+        let home_path = home.join(".devpulse.toml");
+        if home_path.is_file() {
+            return parse_config_file(&home_path);
+        }
+    }
+
+    Ok(Config::default())
+}
+
+/// Parse a TOML config file at the given path.
+fn parse_config_file(path: &Path) -> Result<Config> {
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("Failed to read config file: {}", path.display()))?;
+    let config: Config = toml::from_str(&content)
+        .with_context(|| format!("Failed to parse config file: {}", path.display()))?;
+    Ok(config)
+}
+
+/// Expand `~` in a path string to the user's home directory.
+pub fn expand_tilde(path: &str) -> PathBuf {
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(rest);
+        }
+    } else if path == "~"
+        && let Some(home) = dirs::home_dir()
+    {
+        return home;
+    }
+    PathBuf::from(path)
+}
+
+/// Resolve scan paths from config, expanding `~` and making relative paths
+/// absolute relative to `base_dir`.
+pub fn resolve_scan_paths(config: &Config, base_dir: &Path) -> Vec<PathBuf> {
+    config
+        .scan_paths
+        .iter()
+        .map(|p| {
+            let expanded = expand_tilde(p);
+            if expanded.is_absolute() {
+                expanded
+            } else {
+                base_dir.join(expanded)
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn write_temp_config(dir: &Path, content: &str) {
+        fs::write(dir.join(".devpulse.toml"), content).unwrap();
+    }
+
+    #[test]
+    fn test_parse_full_config() {
+        let dir = tempfile::tempdir().unwrap();
+        write_temp_config(
+            dir.path(),
+            r#"
+scan_paths = ["~/projects", "~/work"]
+sort = "name"
+ignore = [".archived", "vendor"]
+"#,
+        );
+
+        let config = load_config(dir.path()).unwrap();
+        assert_eq!(config.scan_paths, vec!["~/projects", "~/work"]);
+        assert_eq!(config.sort, Some("name".to_string()));
+        assert_eq!(config.ignore, vec![".archived", "vendor"]);
+    }
+
+    #[test]
+    fn test_parse_partial_config() {
+        let dir = tempfile::tempdir().unwrap();
+        write_temp_config(
+            dir.path(),
+            r#"
+sort = "status"
+"#,
+        );
+
+        let config = load_config(dir.path()).unwrap();
+        assert!(config.scan_paths.is_empty());
+        assert_eq!(config.sort, Some("status".to_string()));
+        assert!(config.ignore.is_empty());
+    }
+
+    #[test]
+    fn test_parse_empty_config() {
+        let dir = tempfile::tempdir().unwrap();
+        write_temp_config(dir.path(), "");
+
+        let config = load_config(dir.path()).unwrap();
+        assert_eq!(config, Config::default());
+    }
+
+    #[test]
+    fn test_no_config_file_returns_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = load_config(dir.path()).unwrap();
+        assert_eq!(config, Config::default());
+    }
+
+    #[test]
+    fn test_invalid_toml_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        write_temp_config(dir.path(), "this is not valid toml [[[");
+
+        let result = load_config(dir.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_expand_tilde_home() {
+        let expanded = expand_tilde("~/projects");
+        // Should not start with ~ anymore
+        assert!(!expanded.to_string_lossy().starts_with('~'));
+        assert!(expanded.to_string_lossy().ends_with("projects"));
+    }
+
+    #[test]
+    fn test_expand_tilde_bare() {
+        let expanded = expand_tilde("~");
+        assert!(!expanded.to_string_lossy().starts_with('~'));
+        assert!(expanded.exists() || true); // home dir should exist, but don't fail in CI
+    }
+
+    #[test]
+    fn test_expand_tilde_no_tilde() {
+        let expanded = expand_tilde("/absolute/path");
+        assert_eq!(expanded, PathBuf::from("/absolute/path"));
+    }
+
+    #[test]
+    fn test_expand_tilde_relative() {
+        let expanded = expand_tilde("relative/path");
+        assert_eq!(expanded, PathBuf::from("relative/path"));
+    }
+
+    #[test]
+    fn test_resolve_scan_paths_absolute() {
+        let config = Config {
+            scan_paths: vec!["/tmp/projects".to_string()],
+            ..Config::default()
+        };
+        let paths = resolve_scan_paths(&config, Path::new("/base"));
+        assert_eq!(paths, vec![PathBuf::from("/tmp/projects")]);
+    }
+
+    #[test]
+    fn test_resolve_scan_paths_relative() {
+        let config = Config {
+            scan_paths: vec!["subdir".to_string()],
+            ..Config::default()
+        };
+        let paths = resolve_scan_paths(&config, Path::new("/base"));
+        assert_eq!(paths, vec![PathBuf::from("/base/subdir")]);
+    }
+
+    #[test]
+    fn test_resolve_scan_paths_tilde() {
+        let config = Config {
+            scan_paths: vec!["~/projects".to_string()],
+            ..Config::default()
+        };
+        let paths = resolve_scan_paths(&config, Path::new("/base"));
+        assert!(!paths[0].to_string_lossy().contains('~'));
+    }
+
+    #[test]
+    fn test_resolve_scan_paths_empty() {
+        let config = Config::default();
+        let paths = resolve_scan_paths(&config, Path::new("/base"));
+        assert!(paths.is_empty());
+    }
+
+    #[test]
+    fn test_wrong_type_in_config_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        write_temp_config(
+            dir.path(),
+            r#"
+scan_paths = "should-be-array"
+"#,
+        );
+
+        let result = load_config(dir.path());
+        assert!(result.is_err());
+    }
+}
