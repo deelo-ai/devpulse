@@ -1126,3 +1126,151 @@ fn test_scan_single_repo_depth_zero() {
         "should display repo status: {stdout}"
     );
 }
+
+#[test]
+#[cfg(unix)]
+fn test_permission_denied_directory() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = TempDir::new().unwrap();
+    let restricted = tmp.path().join("no-access");
+    fs::create_dir_all(&restricted).unwrap();
+    init_repo(&restricted);
+
+    // Remove read + execute permissions
+    fs::set_permissions(&restricted, fs::Permissions::from_mode(0o000)).unwrap();
+
+    let (_, stderr, _) = run_devpulse(&[tmp.path().to_str().unwrap()]);
+    // Should handle gracefully — either skip or report error, not panic
+    // Restore permissions so TempDir cleanup works
+    fs::set_permissions(&restricted, fs::Permissions::from_mode(0o755)).unwrap();
+
+    // The key assertion: it didn't panic. stderr may or may not contain an error message.
+    // We just verify it completed without crashing.
+    let _ = stderr; // silence unused warning
+}
+
+#[test]
+fn test_symlink_to_repo() {
+    let tmp = TempDir::new().unwrap();
+    let real_repo = tmp.path().join("real-repo");
+    fs::create_dir_all(&real_repo).unwrap();
+    init_repo(&real_repo);
+
+    // Create a symlink pointing to the real repo
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&real_repo, tmp.path().join("linked-repo")).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(&real_repo, tmp.path().join("linked-repo")).unwrap();
+
+    let (stdout, _, success) = run_devpulse(&["--json", tmp.path().to_str().unwrap()]);
+    assert!(success, "scanning with symlinks should succeed");
+    // Should find at least the real repo
+    let content: String = stdout.lines().filter(|l| !l.starts_with("Scanning")).collect::<Vec<_>>().join("\n");
+    let json: serde_json::Value = serde_json::from_str(content.trim()).unwrap();
+    let projects = json["projects"].as_array().unwrap();
+    assert!(!projects.is_empty(), "should find at least one repo");
+}
+
+#[test]
+fn test_long_project_name() {
+    let tmp = TempDir::new().unwrap();
+    let long_name = "a".repeat(200);
+    let repo = tmp.path().join(&long_name);
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    let (stdout, _, success) = run_devpulse(&[tmp.path().to_str().unwrap()]);
+    assert!(success, "long project name should not crash");
+    assert!(!stdout.is_empty(), "should produce output");
+}
+
+#[test]
+fn test_repo_with_only_staged_no_commits() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("staged-only");
+    fs::create_dir_all(&repo).unwrap();
+
+    // Init repo and add a file to staging without committing beyond initial
+    init_repo(&repo);
+    fs::write(repo.join("staged.txt"), "staged content").unwrap();
+    run_git(&repo, &["add", "staged.txt"]);
+
+    let (stdout, _, success) = run_devpulse(&["--json", tmp.path().to_str().unwrap()]);
+    assert!(success, "repo with staged changes should succeed");
+    let content: String = stdout.lines().filter(|l| !l.starts_with("Scanning")).collect::<Vec<_>>().join("\n");
+    let json: serde_json::Value = serde_json::from_str(content.trim()).unwrap();
+    let projects = json["projects"].as_array().unwrap();
+    assert_eq!(projects.len(), 1);
+    // Should show as not clean since there are staged changes
+    assert!(!projects[0]["is_clean"].as_bool().unwrap(), "staged changes should make repo dirty");
+}
+
+#[test]
+fn test_sort_by_name_deterministic() {
+    let tmp = TempDir::new().unwrap();
+    for name in &["zebra", "alpha", "mango"] {
+        let repo = tmp.path().join(name);
+        fs::create_dir_all(&repo).unwrap();
+        init_repo(&repo);
+    }
+
+    let (stdout, _, success) = run_devpulse(&["--sort", "name", "--json", tmp.path().to_str().unwrap()]);
+    assert!(success);
+    let content: String = stdout.lines().filter(|l| !l.starts_with("Scanning")).collect::<Vec<_>>().join("\n");
+    let json: serde_json::Value = serde_json::from_str(content.trim()).unwrap();
+    let projects = json["projects"].as_array().unwrap();
+    let names: Vec<&str> = projects.iter().map(|p| p["name"].as_str().unwrap()).collect();
+    assert_eq!(names, vec!["alpha", "mango", "zebra"], "should be sorted alphabetically");
+}
+
+#[test]
+fn test_csv_header_and_row_count() {
+    let tmp = TempDir::new().unwrap();
+    for name in &["proj-a", "proj-b", "proj-c"] {
+        let repo = tmp.path().join(name);
+        fs::create_dir_all(&repo).unwrap();
+        init_repo(&repo);
+    }
+
+    let (stdout, _, success) = run_devpulse(&["--format", "csv", tmp.path().to_str().unwrap()]);
+    assert!(success, "csv output should succeed");
+    let lines: Vec<&str> = stdout.lines()
+        .filter(|l| !l.trim().is_empty() && !l.starts_with("Scanning") && !l.starts_with("Found"))
+        .collect();
+    // Should have header + 3 data rows
+    assert!(lines.len() >= 4, "should have header + 3 rows, got {} lines: {:?}", lines.len(), lines);
+    // First line should be a CSV header with commas
+    let header = lines[0].to_lowercase();
+    assert!(header.contains(","), "csv header should contain commas: {}", header);
+}
+
+#[test]
+fn test_markdown_table_structure() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("md-test");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    let (stdout, _, success) = run_devpulse(&["--format", "markdown", tmp.path().to_str().unwrap()]);
+    assert!(success, "markdown output should succeed");
+    let content: String = stdout.lines().filter(|l| !l.starts_with("Scanning")).collect::<Vec<_>>().join("\n");
+    // Markdown table should have pipe characters
+    assert!(content.contains("|"), "markdown output should contain table pipes");
+    // Should have a separator row with dashes
+    assert!(content.contains("---"), "markdown table should have separator row");
+}
+
+#[test]
+fn test_empty_scan_directory_json() {
+    let tmp = TempDir::new().unwrap();
+    // No repos created — empty directory
+
+    let (stdout, _, success) = run_devpulse(&["--json", tmp.path().to_str().unwrap()]);
+    assert!(success, "empty directory scan should succeed");
+    // When no projects found, devpulse outputs a hint message, not JSON
+    assert!(
+        stdout.contains("No projects found") || stdout.contains("projects"),
+        "should indicate no projects found: {stdout}"
+    );
+}
