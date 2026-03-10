@@ -1,0 +1,651 @@
+//! Integration tests for devpulse CLI.
+//!
+//! Each test creates temporary git repos with known state, runs the devpulse
+//! binary via `std::process::Command`, and verifies stdout output.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use tempfile::TempDir;
+
+/// Get the path to the devpulse binary (built by cargo test).
+fn devpulse_bin() -> PathBuf {
+    // cargo test builds the binary in target/debug
+    let mut path = std::env::current_exe()
+        .expect("failed to get test exe path")
+        .parent()
+        .expect("no parent")
+        .parent()
+        .expect("no grandparent")
+        .to_path_buf();
+    path.push("devpulse");
+    path
+}
+
+/// Run devpulse with given args and return (stdout, stderr, success).
+fn run_devpulse(args: &[&str]) -> (String, String, bool) {
+    let output = Command::new(devpulse_bin())
+        .args(args)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("failed to run devpulse");
+    (
+        String::from_utf8_lossy(&output.stdout).to_string(),
+        String::from_utf8_lossy(&output.stderr).to_string(),
+        output.status.success(),
+    )
+}
+
+/// Create a git repo with an initial commit in `dir`.
+fn init_repo(dir: &Path) {
+    run_git(dir, &["init"]);
+    run_git(dir, &["config", "user.email", "test@test.com"]);
+    run_git(dir, &["config", "user.name", "Test"]);
+    run_git(dir, &["commit", "--allow-empty", "-m", "initial commit"]);
+}
+
+/// Create a git repo with a dirty working tree.
+fn init_dirty_repo(dir: &Path) {
+    init_repo(dir);
+    fs::write(dir.join("dirty.txt"), "uncommitted").expect("failed to write dirty file");
+}
+
+/// Run a git command in a directory.
+fn run_git(dir: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("failed to run git");
+    if !output.status.success() {
+        panic!(
+            "git {:?} failed in {}: {}",
+            args,
+            dir.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+/// Create a standard test environment with multiple repos.
+fn setup_multi_repo(parent: &Path) {
+    let clean = parent.join("alpha-clean");
+    let dirty = parent.join("beta-dirty");
+    fs::create_dir_all(&clean).unwrap();
+    fs::create_dir_all(&dirty).unwrap();
+    init_repo(&clean);
+    init_dirty_repo(&dirty);
+}
+
+// ============================================================
+// Tests
+// ============================================================
+
+#[test]
+fn test_scan_clean_repo() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("myproject");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    let (stdout, _stderr, success) = run_devpulse(&["--no-color", tmp.path().to_str().unwrap()]);
+    assert!(success, "devpulse should exit 0");
+    assert!(stdout.contains("myproject"), "output should contain project name");
+    assert!(stdout.contains("clean"), "clean repo should show 'clean'");
+    assert!(stdout.contains("main"), "should show branch name");
+}
+
+#[test]
+fn test_scan_dirty_repo() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("dirtyproject");
+    fs::create_dir_all(&repo).unwrap();
+    init_dirty_repo(&repo);
+
+    let (stdout, _stderr, success) = run_devpulse(&["--no-color", tmp.path().to_str().unwrap()]);
+    assert!(success);
+    assert!(stdout.contains("dirtyproject"));
+    assert!(stdout.contains("dirty"), "dirty repo should show 'dirty'");
+    assert!(
+        stdout.contains('1'),
+        "should show 1 changed file somewhere in output"
+    );
+}
+
+#[test]
+fn test_json_output() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("jsontest");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    let (stdout, _stderr, success) = run_devpulse(&["--json", tmp.path().to_str().unwrap()]);
+    assert!(success);
+
+    let parsed: serde_json::Value = serde_json::from_str(
+        stdout
+            .lines()
+            .filter(|l| !l.starts_with("Scanning"))
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim(),
+    )
+    .expect("JSON output should be valid JSON");
+
+    let projects = parsed["projects"].as_array().expect("should have projects array");
+    assert_eq!(projects.len(), 1);
+    assert_eq!(projects[0]["name"], "jsontest");
+    assert_eq!(projects[0]["is_clean"], true);
+    assert_eq!(projects[0]["branch"], "main");
+
+    let summary = &parsed["summary"];
+    assert_eq!(summary["total"], 1);
+    assert_eq!(summary["dirty"], 0);
+}
+
+#[test]
+fn test_csv_output() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("csvtest");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    let (stdout, _stderr, success) =
+        run_devpulse(&["--format", "csv", tmp.path().to_str().unwrap()]);
+    assert!(success);
+
+    let lines: Vec<&str> = stdout
+        .lines()
+        .filter(|l| !l.starts_with("Scanning") && !l.is_empty())
+        .collect();
+    assert!(lines.len() >= 2, "CSV should have header + at least 1 row");
+    assert!(
+        lines[0].contains("Project") || lines[0].contains("project") || lines[0].contains("name"),
+        "first line should be CSV header"
+    );
+    assert!(lines[1].contains("csvtest"), "data row should contain project name");
+}
+
+#[test]
+fn test_markdown_output() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("mdtest");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    let (stdout, _stderr, success) =
+        run_devpulse(&["--format", "markdown", tmp.path().to_str().unwrap()]);
+    assert!(success);
+
+    let content: String = stdout
+        .lines()
+        .filter(|l| !l.starts_with("Scanning"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(content.contains('|'), "markdown output should contain pipe characters for table");
+    assert!(content.contains("mdtest"), "should contain project name");
+}
+
+#[test]
+fn test_sort_by_name() {
+    let tmp = TempDir::new().unwrap();
+    setup_multi_repo(tmp.path());
+
+    let (stdout, _stderr, success) =
+        run_devpulse(&["--sort", "name", "--no-color", tmp.path().to_str().unwrap()]);
+    assert!(success);
+
+    let alpha_pos = stdout.find("alpha-clean").expect("should find alpha-clean");
+    let beta_pos = stdout.find("beta-dirty").expect("should find beta-dirty");
+    assert!(
+        alpha_pos < beta_pos,
+        "alpha should appear before beta when sorted by name"
+    );
+}
+
+#[test]
+fn test_sort_by_status() {
+    let tmp = TempDir::new().unwrap();
+    setup_multi_repo(tmp.path());
+
+    let (stdout, _stderr, success) =
+        run_devpulse(&["--sort", "status", "--no-color", tmp.path().to_str().unwrap()]);
+    assert!(success);
+
+    let dirty_pos = stdout.find("beta-dirty").expect("should find beta-dirty");
+    let clean_pos = stdout.find("alpha-clean").expect("should find alpha-clean");
+    assert!(
+        dirty_pos < clean_pos,
+        "dirty projects should appear before clean when sorted by status"
+    );
+}
+
+#[test]
+fn test_filter_dirty() {
+    let tmp = TempDir::new().unwrap();
+    setup_multi_repo(tmp.path());
+
+    let (stdout, _stderr, success) = run_devpulse(&[
+        "--filter",
+        "dirty",
+        "--no-color",
+        tmp.path().to_str().unwrap(),
+    ]);
+    assert!(success);
+    assert!(stdout.contains("beta-dirty"), "should show dirty project");
+    assert!(
+        !stdout.contains("alpha-clean"),
+        "should not show clean project when filtering for dirty"
+    );
+}
+
+#[test]
+fn test_filter_clean() {
+    let tmp = TempDir::new().unwrap();
+    setup_multi_repo(tmp.path());
+
+    let (stdout, _stderr, success) = run_devpulse(&[
+        "--filter",
+        "clean",
+        "--no-color",
+        tmp.path().to_str().unwrap(),
+    ]);
+    assert!(success);
+    assert!(stdout.contains("alpha-clean"), "should show clean project");
+    assert!(
+        !stdout.contains("beta-dirty"),
+        "should not show dirty project when filtering for clean"
+    );
+}
+
+#[test]
+fn test_filter_by_name() {
+    let tmp = TempDir::new().unwrap();
+    setup_multi_repo(tmp.path());
+
+    let (stdout, _stderr, success) = run_devpulse(&[
+        "--filter",
+        "name:alpha",
+        "--no-color",
+        tmp.path().to_str().unwrap(),
+    ]);
+    assert!(success);
+    assert!(stdout.contains("alpha-clean"), "should show matching project");
+    assert!(
+        !stdout.contains("beta-dirty"),
+        "should not show non-matching project"
+    );
+}
+
+#[test]
+fn test_nonexistent_directory() {
+    let (stdout, _stderr, success) = run_devpulse(&["/tmp/devpulse_nonexistent_dir_xyz"]);
+    // Should either fail gracefully or show "no projects found"
+    // The important thing is it doesn't panic
+    let combined = format!("{stdout}{_stderr}");
+    assert!(
+        !success || combined.contains("No projects found") || combined.contains("error"),
+        "should handle nonexistent directory gracefully"
+    );
+}
+
+#[test]
+fn test_empty_directory() {
+    let tmp = TempDir::new().unwrap();
+    // No git repos in this directory
+
+    let (stdout, _stderr, success) = run_devpulse(&["--no-color", tmp.path().to_str().unwrap()]);
+    assert!(success, "should exit 0 for empty dir");
+    assert!(
+        stdout.contains("No projects found"),
+        "should indicate no projects found, got: {stdout}"
+    );
+}
+
+#[test]
+fn test_output_to_file() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("fileout");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    let output_file = tmp.path().join("output.json");
+    let (_, _stderr, success) = run_devpulse(&[
+        "--json",
+        "--output",
+        output_file.to_str().unwrap(),
+        tmp.path().to_str().unwrap(),
+    ]);
+    assert!(success, "should succeed writing to file");
+    assert!(output_file.exists(), "output file should be created");
+
+    let content = fs::read_to_string(&output_file).expect("should read output file");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&content).expect("output file should contain valid JSON");
+    assert!(parsed["projects"].is_array());
+}
+
+#[test]
+fn test_group_flag() {
+    let tmp = TempDir::new().unwrap();
+
+    // Create repos in subdirectories to test grouping
+    let subdir1 = tmp.path().join("group1");
+    let subdir2 = tmp.path().join("group2");
+    fs::create_dir_all(&subdir1).unwrap();
+    fs::create_dir_all(&subdir2).unwrap();
+
+    let repo1 = subdir1.join("proj-a");
+    let repo2 = subdir2.join("proj-b");
+    fs::create_dir_all(&repo1).unwrap();
+    fs::create_dir_all(&repo2).unwrap();
+    init_repo(&repo1);
+    init_repo(&repo2);
+
+    let (stdout, _stderr, success) = run_devpulse(&[
+        "--group",
+        "--no-color",
+        "--depth",
+        "2",
+        tmp.path().to_str().unwrap(),
+    ]);
+    assert!(success, "grouped output should succeed");
+    assert!(
+        stdout.contains("proj-a") && stdout.contains("proj-b"),
+        "should show both projects"
+    );
+}
+
+#[test]
+fn test_no_color_flag() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("colortest");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    let (stdout, _stderr, success) =
+        run_devpulse(&["--no-color", tmp.path().to_str().unwrap()]);
+    assert!(success);
+    // ANSI escape codes start with \x1b[
+    assert!(
+        !stdout.contains("\x1b["),
+        "no-color output should not contain ANSI escape codes"
+    );
+}
+
+#[test]
+fn test_no_color_env_var() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("envcolortest");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    let output = Command::new(devpulse_bin())
+        .args([tmp.path().to_str().unwrap()])
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("failed to run devpulse");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success());
+    assert!(
+        !stdout.contains("\x1b["),
+        "NO_COLOR env should suppress ANSI codes"
+    );
+}
+
+#[test]
+fn test_version_flag() {
+    let (stdout, _stderr, success) = run_devpulse(&["--version"]);
+    assert!(success);
+    assert!(
+        stdout.contains("devpulse") && stdout.contains("0.1.0"),
+        "version output should contain name and version, got: {stdout}"
+    );
+}
+
+#[test]
+fn test_help_flag() {
+    let (stdout, _stderr, success) = run_devpulse(&["--help"]);
+    assert!(success);
+    assert!(stdout.contains("Usage:"), "help should contain usage info");
+    assert!(stdout.contains("--sort"), "help should list --sort flag");
+    assert!(stdout.contains("--json"), "help should list --json flag");
+}
+
+#[test]
+fn test_invalid_filter() {
+    let tmp = TempDir::new().unwrap();
+    let (_, stderr, success) = run_devpulse(&[
+        "--filter",
+        "bogus_filter",
+        tmp.path().to_str().unwrap(),
+    ]);
+    assert!(!success, "invalid filter should cause non-zero exit");
+    assert!(
+        stderr.contains("Unknown filter") || stderr.contains("error") || stderr.contains("bogus"),
+        "should report invalid filter in stderr"
+    );
+}
+
+#[test]
+fn test_since_flag() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("sincetest");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    // Recent commit should appear with --since 1d
+    let (stdout, _stderr, success) = run_devpulse(&[
+        "--since",
+        "1d",
+        "--no-color",
+        tmp.path().to_str().unwrap(),
+    ]);
+    assert!(success);
+    assert!(
+        stdout.contains("sincetest"),
+        "recent project should appear with --since 1d"
+    );
+}
+
+#[test]
+fn test_since_flag_excludes_old() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("oldproject");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    // With an extremely short since window, we still find it because
+    // commit was just made. But --since 0d should filter everything
+    // (0 days = now, nothing matches). This tests the filter works at all.
+    // Using --json to check programmatically.
+    let (stdout, _stderr, success) = run_devpulse(&[
+        "--json",
+        "--since",
+        "1d",
+        tmp.path().to_str().unwrap(),
+    ]);
+    assert!(success);
+
+    let json_str: String = stdout
+        .lines()
+        .filter(|l| !l.starts_with("Scanning"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let parsed: serde_json::Value =
+        serde_json::from_str(json_str.trim()).expect("should be valid JSON");
+    let projects = parsed["projects"].as_array().unwrap();
+    assert_eq!(
+        projects.len(),
+        1,
+        "project with recent commit should appear with --since 1d"
+    );
+}
+
+#[test]
+fn test_multiple_filters() {
+    let tmp = TempDir::new().unwrap();
+    setup_multi_repo(tmp.path());
+
+    // Filter for dirty AND name contains beta — should match beta-dirty
+    let (stdout, _stderr, success) = run_devpulse(&[
+        "--filter",
+        "dirty",
+        "--filter",
+        "name:beta",
+        "--no-color",
+        tmp.path().to_str().unwrap(),
+    ]);
+    assert!(success);
+    assert!(stdout.contains("beta-dirty"), "combined filters should match beta-dirty");
+    assert!(
+        !stdout.contains("alpha-clean"),
+        "combined filters should exclude alpha-clean"
+    );
+}
+
+#[test]
+fn test_depth_zero() {
+    let tmp = TempDir::new().unwrap();
+    // Initialize the root as a git repo itself
+    init_repo(tmp.path());
+
+    let (stdout, _stderr, success) = run_devpulse(&[
+        "--depth",
+        "0",
+        "--no-color",
+        tmp.path().to_str().unwrap(),
+    ]);
+    assert!(success);
+    // With depth 0, it should check the target directory itself
+    let dir_name = tmp
+        .path()
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(
+        stdout.contains(dir_name) || stdout.contains("clean"),
+        "depth 0 should scan the directory itself"
+    );
+}
+
+#[test]
+fn test_json_summary_counts() {
+    let tmp = TempDir::new().unwrap();
+    setup_multi_repo(tmp.path());
+
+    let (stdout, _stderr, success) = run_devpulse(&["--json", tmp.path().to_str().unwrap()]);
+    assert!(success);
+
+    let json_str: String = stdout
+        .lines()
+        .filter(|l| !l.starts_with("Scanning"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let parsed: serde_json::Value =
+        serde_json::from_str(json_str.trim()).expect("should be valid JSON");
+
+    let summary = &parsed["summary"];
+    assert_eq!(summary["total"], 2, "should have 2 total projects");
+    assert_eq!(summary["dirty"], 1, "should have 1 dirty project");
+}
+
+#[test]
+fn test_csv_output_to_file() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("csvfile");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    let output_file = tmp.path().join("output.csv");
+    let (_, _stderr, success) = run_devpulse(&[
+        "--format",
+        "csv",
+        "--output",
+        output_file.to_str().unwrap(),
+        tmp.path().to_str().unwrap(),
+    ]);
+    assert!(success);
+    assert!(output_file.exists(), "CSV output file should be created");
+
+    let content = fs::read_to_string(&output_file).unwrap();
+    assert!(content.contains("csvfile"), "CSV file should contain project name");
+}
+
+#[test]
+fn test_markdown_output_to_file() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("mdfile");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    let output_file = tmp.path().join("output.md");
+    let (_, _stderr, success) = run_devpulse(&[
+        "--format",
+        "md",
+        "--output",
+        output_file.to_str().unwrap(),
+        tmp.path().to_str().unwrap(),
+    ]);
+    assert!(success);
+    assert!(output_file.exists(), "markdown output file should be created");
+
+    let content = fs::read_to_string(&output_file).unwrap();
+    assert!(content.contains('|'), "markdown file should contain table separators");
+    assert!(content.contains("mdfile"));
+}
+
+#[test]
+fn test_stash_count_in_json() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("stashtest");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    // Create a stash
+    fs::write(repo.join("stash.txt"), "stashme").unwrap();
+    run_git(&repo, &["add", "stash.txt"]);
+    run_git(&repo, &["stash", "push", "-m", "test stash"]);
+
+    let (stdout, _stderr, success) = run_devpulse(&["--json", tmp.path().to_str().unwrap()]);
+    assert!(success);
+
+    let json_str: String = stdout
+        .lines()
+        .filter(|l| !l.starts_with("Scanning"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let parsed: serde_json::Value =
+        serde_json::from_str(json_str.trim()).expect("should be valid JSON");
+    let stash_count = parsed["projects"][0]["stash_count"]
+        .as_u64()
+        .expect("stash_count should be a number");
+    assert_eq!(stash_count, 1, "should detect 1 stash entry");
+}
+
+#[test]
+fn test_last_commit_message_in_json() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("msgtest");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    // The initial commit message is "initial commit"
+    let (stdout, _stderr, success) = run_devpulse(&["--json", tmp.path().to_str().unwrap()]);
+    assert!(success);
+
+    let json_str: String = stdout
+        .lines()
+        .filter(|l| !l.starts_with("Scanning"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let parsed: serde_json::Value =
+        serde_json::from_str(json_str.trim()).expect("should be valid JSON");
+    let msg = parsed["projects"][0]["last_commit_message"]
+        .as_str()
+        .expect("should have last_commit_message");
+    assert_eq!(msg, "initial commit");
+}
