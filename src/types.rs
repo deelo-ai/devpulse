@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 /// Status information for a single project
-#[derive(Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ProjectStatus {
     /// Project name (directory name)
     pub name: String,

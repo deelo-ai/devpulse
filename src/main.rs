@@ -2,6 +2,7 @@ mod config;
 mod export;
 mod filter;
 mod git;
+mod group;
 mod scanner;
 mod summary;
 mod table;
@@ -74,6 +75,11 @@ struct Cli {
     /// Works with all formats; table output strips ANSI colors when writing to file.
     #[arg(long, short = 'o', value_name = "PATH")]
     output: Option<PathBuf>,
+
+    /// Group projects by their parent directory.
+    /// Each group gets a sub-header and per-group summary stats.
+    #[arg(long, short = 'g')]
+    group: bool,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -119,6 +125,7 @@ fn parse_filters(filter_args: &[String]) -> Result<Vec<filter::ProjectFilter>> {
     Ok(filters)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn scan_and_display(
     scan_path: &std::path::Path,
     sort: &SortBy,
@@ -127,6 +134,7 @@ fn scan_and_display(
     ignore: &[String],
     depth: u32,
     output: Option<&std::path::Path>,
+    group_by_parent: bool,
 ) -> Result<()> {
     let project_paths = scanner::discover_projects_with_depth(scan_path, ignore, depth)?;
 
@@ -151,10 +159,66 @@ fn scan_and_display(
 
     sort_statuses(&mut statuses, sort);
 
-    if let Some(output_path) = output {
+    if group_by_parent {
+        write_grouped_output(statuses, format, output)?;
+    } else if let Some(output_path) = output {
         export::write_output_to_file(&statuses, format, output_path)?;
     } else {
         export::write_output(&statuses, format)?;
+    }
+
+    Ok(())
+}
+
+/// Write grouped output to stdout or a file.
+fn write_grouped_output(
+    statuses: Vec<types::ProjectStatus>,
+    format: &export::OutputFormat,
+    output: Option<&std::path::Path>,
+) -> Result<()> {
+    let groups = group::group_by_parent(statuses);
+    let normalized = format.normalized();
+
+    let content = match normalized {
+        export::OutputFormat::Json => group::format_grouped_json(&groups)?,
+        export::OutputFormat::Csv => group::format_grouped_csv(&groups)?,
+        export::OutputFormat::Markdown | export::OutputFormat::Md => {
+            group::format_grouped_markdown(&groups)?
+        }
+        export::OutputFormat::Table => {
+            // For table format with grouping, print each group with a header
+            let mut out = String::new();
+            for g in &groups {
+                out.push_str(&format!("\n── {} ──\n\n", g.label));
+                out.push_str(&crate::table::format_table_plain(&g.projects));
+                let summary_line = format!(
+                    "  {} projects │ {} dirty │ {} stale │ {} unpushed\n",
+                    g.summary.total, g.summary.dirty, g.summary.stale, g.summary.unpushed,
+                );
+                out.push_str(&summary_line);
+            }
+            out
+        }
+    };
+
+    if let Some(output_path) = output {
+        if let Some(parent) = output_path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(output_path, &content)?;
+        eprintln!("Wrote grouped output to {}", output_path.display());
+    } else if matches!(normalized, export::OutputFormat::Table) {
+        // For table, print with colors instead of the plain text version
+        for g in &groups {
+            println!("\n── {} ──\n", g.label);
+            crate::table::print_table(&g.projects);
+            g.summary.print_colored();
+            println!();
+        }
+    } else {
+        print!("{content}");
     }
 
     Ok(())
@@ -228,6 +292,7 @@ fn main() -> Result<()> {
                 ignore,
                 depth,
                 cli.output.as_deref(),
+                cli.group,
             )?;
         }
     }
