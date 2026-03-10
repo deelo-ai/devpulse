@@ -69,6 +69,11 @@ struct Cli {
     /// 2+ = recursive scanning
     #[arg(long, short = 'd')]
     depth: Option<u32>,
+
+    /// Write output to a file instead of stdout.
+    /// Works with all formats; table output strips ANSI colors when writing to file.
+    #[arg(long, short = 'o', value_name = "PATH")]
+    output: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -121,6 +126,7 @@ fn scan_and_display(
     filters: &[filter::ProjectFilter],
     ignore: &[String],
     depth: u32,
+    output: Option<&std::path::Path>,
 ) -> Result<()> {
     let project_paths = scanner::discover_projects_with_depth(scan_path, ignore, depth)?;
 
@@ -145,7 +151,11 @@ fn scan_and_display(
 
     sort_statuses(&mut statuses, sort);
 
-    export::write_output(&statuses, format)?;
+    if let Some(output_path) = output {
+        export::write_output_to_file(&statuses, format, output_path)?;
+    } else {
+        export::write_output(&statuses, format)?;
+    }
 
     Ok(())
 }
@@ -208,7 +218,15 @@ fn main() -> Result<()> {
     } else {
         for path in &scan_paths {
             println!("Scanning {}...\n", path.display());
-            scan_and_display(path, &sort, &output_format, &filters, ignore, depth)?;
+            scan_and_display(
+                path,
+                &sort,
+                &output_format,
+                &filters,
+                ignore,
+                depth,
+                cli.output.as_deref(),
+            )?;
         }
     }
 

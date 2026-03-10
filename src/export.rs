@@ -1,5 +1,7 @@
 use std::fmt;
+use std::fs;
 use std::io::{self, Write};
+use std::path::Path;
 
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -208,6 +210,42 @@ pub fn write_output(statuses: &[ProjectStatus], format: &OutputFormat) -> Result
             Ok(())
         }
     }
+}
+
+/// Format output as a string for any format (table uses plain text, no ANSI).
+pub fn format_output(statuses: &[ProjectStatus], format: &OutputFormat) -> Result<String> {
+    let normalized = format.normalized();
+    match normalized {
+        OutputFormat::Table => Ok(crate::table::format_table_plain(statuses)),
+        OutputFormat::Json => format_json(statuses),
+        OutputFormat::Csv => format_csv(statuses),
+        OutputFormat::Markdown | OutputFormat::Md => format_markdown(statuses),
+    }
+}
+
+/// Write formatted output to a file, creating parent directories as needed.
+/// Prints a confirmation message to stderr on success.
+pub fn write_output_to_file(
+    statuses: &[ProjectStatus],
+    format: &OutputFormat,
+    path: &Path,
+) -> Result<()> {
+    let content = format_output(statuses, format)?;
+
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).with_context(|| {
+            format!("Failed to create parent directories for {}", path.display())
+        })?;
+    }
+
+    fs::write(path, &content)
+        .with_context(|| format!("Failed to write output to {}", path.display()))?;
+
+    eprintln!("Wrote {} projects to {}", statuses.len(), path.display());
+
+    Ok(())
 }
 
 /// Escape pipe characters in markdown table cells.
@@ -491,5 +529,123 @@ mod tests {
         let now = Utc::now();
         let then = now - Duration::days(400);
         assert_eq!(format_relative_time(now, then), "1y ago");
+    }
+
+    #[test]
+    fn test_format_output_csv() {
+        let statuses = vec![make_project("app", "main", true, Some(1), 0, 0, 0)];
+        let result = format_output(&statuses, &OutputFormat::Csv).unwrap();
+        assert!(result.starts_with("Project,"));
+        assert!(result.contains("app,main,clean"));
+    }
+
+    #[test]
+    fn test_format_output_json() {
+        let statuses = vec![make_project("app", "main", true, Some(1), 0, 0, 0)];
+        let result = format_output(&statuses, &OutputFormat::Json).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed["projects"].is_array());
+    }
+
+    #[test]
+    fn test_format_output_markdown() {
+        let statuses = vec![make_project("app", "main", true, Some(1), 0, 0, 0)];
+        let result = format_output(&statuses, &OutputFormat::Markdown).unwrap();
+        assert!(result.contains("| app |"));
+    }
+
+    #[test]
+    fn test_format_output_md_alias() {
+        let statuses = vec![make_project("app", "main", true, Some(1), 0, 0, 0)];
+        let result = format_output(&statuses, &OutputFormat::Md).unwrap();
+        assert!(result.contains("| app |"));
+    }
+
+    #[test]
+    fn test_format_output_table_plain() {
+        let statuses = vec![make_project("app", "main", true, Some(1), 0, 0, 0)];
+        let result = format_output(&statuses, &OutputFormat::Table).unwrap();
+        assert!(result.contains("Project"));
+        assert!(result.contains("app"));
+        // Should NOT contain ANSI escape codes
+        assert!(!result.contains("\x1b["));
+    }
+
+    #[test]
+    fn test_format_output_empty() {
+        let result = format_output(&[], &OutputFormat::Table).unwrap();
+        assert!(result.contains("No projects found"));
+    }
+
+    #[test]
+    fn test_write_output_to_file_csv() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("report.csv");
+        let statuses = vec![make_project("app", "main", true, Some(1), 0, 0, 0)];
+        write_output_to_file(&statuses, &OutputFormat::Csv, &path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.starts_with("Project,"));
+        assert!(content.contains("app,main,clean"));
+    }
+
+    #[test]
+    fn test_write_output_to_file_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("report.json");
+        let statuses = vec![make_project("app", "main", true, Some(1), 0, 0, 0)];
+        write_output_to_file(&statuses, &OutputFormat::Json, &path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["summary"]["total"], 1);
+    }
+
+    #[test]
+    fn test_write_output_to_file_creates_parent_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("dir").join("report.md");
+        let statuses = vec![make_project("app", "main", true, Some(1), 0, 0, 0)];
+        write_output_to_file(&statuses, &OutputFormat::Markdown, &path).unwrap();
+        assert!(path.exists());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("| app |"));
+    }
+
+    #[test]
+    fn test_write_output_to_file_overwrites_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("report.csv");
+        std::fs::write(&path, "old content").unwrap();
+        let statuses = vec![make_project("new-app", "main", true, Some(1), 0, 0, 0)];
+        write_output_to_file(&statuses, &OutputFormat::Csv, &path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(!content.contains("old content"));
+        assert!(content.contains("new-app"));
+    }
+
+    #[test]
+    fn test_write_output_to_file_table_no_ansi() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("report.txt");
+        let statuses = vec![
+            make_project("clean-app", "main", true, Some(1), 0, 0, 0),
+            make_project("dirty-app", "dev", false, Some(5), 2, 1, 3),
+        ];
+        write_output_to_file(&statuses, &OutputFormat::Table, &path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("clean-app"));
+        assert!(content.contains("dirty-app"));
+        // No ANSI escape sequences
+        assert!(!content.contains("\x1b["));
+    }
+
+    #[test]
+    fn test_write_output_to_file_empty_statuses() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.csv");
+        write_output_to_file(&[], &OutputFormat::Csv, &path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        // Should have header only
+        assert!(content.starts_with("Project,"));
+        assert_eq!(content.lines().count(), 1);
     }
 }

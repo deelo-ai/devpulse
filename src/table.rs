@@ -129,6 +129,95 @@ pub fn print_table(statuses: &[ProjectStatus]) {
     println!();
 }
 
+/// Format a plain-text table of project statuses (no ANSI colors).
+/// Used when writing table output to a file.
+pub fn format_table_plain(statuses: &[ProjectStatus]) -> String {
+    use crate::summary::Summary;
+
+    if statuses.is_empty() {
+        return "No projects found.\n".to_string();
+    }
+
+    let mut out = String::new();
+
+    // Calculate column widths
+    let name_width = statuses
+        .iter()
+        .map(|s| s.name.len())
+        .max()
+        .unwrap_or(7)
+        .max(7);
+    let branch_width = statuses
+        .iter()
+        .map(|s| s.branch.len())
+        .max()
+        .unwrap_or(6)
+        .max(6);
+
+    // Header
+    out.push_str(&format!(
+        "  {:<name_w$}  {:<branch_w$}  {:>8}  {:>7}  {:>14}  {:>12}  {:>5}  {}\n",
+        "Project",
+        "Branch",
+        "Status",
+        "Changed",
+        "Last Commit",
+        "Ahead/Behind",
+        "Stash",
+        "Message",
+        name_w = name_width,
+        branch_w = branch_width,
+    ));
+    out.push_str(&format!(
+        "  {}\n",
+        "-".repeat(name_width + branch_width + 8 + 7 + 14 + 12 + 5 + MESSAGE_MAX_LEN + 20)
+    ));
+
+    let now = Utc::now();
+
+    for s in statuses {
+        let status_str = if s.is_clean { "clean" } else { "dirty" };
+        let last_commit_str = match s.last_commit {
+            Some(dt) => format_relative_time(now, dt),
+            None => "no commits".to_string(),
+        };
+        let ahead_behind = if s.ahead == 0 && s.behind == 0 {
+            "—".to_string()
+        } else {
+            format!("↑{} ↓{}", s.ahead, s.behind)
+        };
+        let stash_str = if s.stash_count == 0 {
+            "—".to_string()
+        } else {
+            format!("{}", s.stash_count)
+        };
+        let message_str = match &s.last_commit_message {
+            Some(msg) => truncate_message(msg, MESSAGE_MAX_LEN),
+            None => "—".to_string(),
+        };
+
+        out.push_str(&format!(
+            "  {:<name_w$}  {:<branch_w$}  {:>8}  {:>7}  {:>14}  {:>12}  {:>5}  {}\n",
+            s.name,
+            s.branch,
+            status_str,
+            s.changed_files,
+            last_commit_str,
+            ahead_behind,
+            stash_str,
+            message_str,
+            name_w = name_width,
+            branch_w = branch_width,
+        ));
+    }
+
+    out.push('\n');
+    let summary = Summary::from_statuses(statuses);
+    out.push_str(&format!("  {}\n", summary.to_plain_string()));
+
+    out
+}
+
 /// Format a duration between now and a past timestamp as a human-readable string.
 fn format_relative_time(now: chrono::DateTime<Utc>, then: chrono::DateTime<Utc>) -> String {
     let duration = now - then;
