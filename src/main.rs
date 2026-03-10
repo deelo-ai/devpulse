@@ -185,11 +185,13 @@ fn main() -> Result<()> {
     // Resolve depth: CLI flag takes priority, then config, then default of 1
     let depth = cli.depth.or(cfg.depth).unwrap_or(1);
 
-    // Resolve output format: --format takes priority, --json is shorthand
+    // Resolve output format: --format > --json > config format > table
     let output_format = if let Some(fmt) = cli.format {
         fmt
     } else if cli.json {
         export::OutputFormat::Json
+    } else if let Some(ref fmt_str) = cfg.format {
+        config::parse_format_str(fmt_str)?
     } else {
         export::OutputFormat::Table
     };

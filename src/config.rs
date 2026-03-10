@@ -16,6 +16,8 @@ pub struct Config {
     pub ignore: Vec<String>,
     /// How many levels deep to scan for git projects (default: 1).
     pub depth: Option<u32>,
+    /// Default output format: "table", "json", "csv", "markdown", or "md".
+    pub format: Option<String>,
 }
 
 /// Locate and load a `.devpulse.toml` config file.
@@ -64,6 +66,24 @@ pub fn expand_tilde(path: &str) -> PathBuf {
         return home;
     }
     PathBuf::from(path)
+}
+
+/// Parse a format string from config into an `OutputFormat`.
+///
+/// Returns `Ok(Some(format))` if valid, `Ok(None)` if no format specified,
+/// or an error if the value is not recognized.
+pub fn parse_format_str(format_str: &str) -> Result<crate::export::OutputFormat> {
+    match format_str.trim().to_lowercase().as_str() {
+        "table" => Ok(crate::export::OutputFormat::Table),
+        "json" => Ok(crate::export::OutputFormat::Json),
+        "csv" => Ok(crate::export::OutputFormat::Csv),
+        "markdown" => Ok(crate::export::OutputFormat::Markdown),
+        "md" => Ok(crate::export::OutputFormat::Md),
+        other => anyhow::bail!(
+            "Invalid format in config: '{}'. Valid values: table, json, csv, markdown, md",
+            other
+        ),
+    }
 }
 
 /// Resolve scan paths from config, expanding `~` and making relative paths
@@ -241,6 +261,97 @@ sort = "name"
 
         let config = load_config(dir.path()).unwrap();
         assert_eq!(config.depth, None);
+    }
+
+    #[test]
+    fn test_parse_config_with_format() {
+        let dir = tempfile::tempdir().unwrap();
+        write_temp_config(
+            dir.path(),
+            r#"
+format = "csv"
+"#,
+        );
+
+        let config = load_config(dir.path()).unwrap();
+        assert_eq!(config.format, Some("csv".to_string()));
+    }
+
+    #[test]
+    fn test_parse_config_without_format_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        write_temp_config(
+            dir.path(),
+            r#"
+sort = "name"
+"#,
+        );
+
+        let config = load_config(dir.path()).unwrap();
+        assert_eq!(config.format, None);
+    }
+
+    #[test]
+    fn test_parse_format_str_valid_values() {
+        assert_eq!(
+            parse_format_str("table").unwrap(),
+            crate::export::OutputFormat::Table
+        );
+        assert_eq!(
+            parse_format_str("json").unwrap(),
+            crate::export::OutputFormat::Json
+        );
+        assert_eq!(
+            parse_format_str("csv").unwrap(),
+            crate::export::OutputFormat::Csv
+        );
+        assert_eq!(
+            parse_format_str("markdown").unwrap(),
+            crate::export::OutputFormat::Markdown
+        );
+        assert_eq!(
+            parse_format_str("md").unwrap(),
+            crate::export::OutputFormat::Md
+        );
+    }
+
+    #[test]
+    fn test_parse_format_str_case_insensitive() {
+        assert_eq!(
+            parse_format_str("CSV").unwrap(),
+            crate::export::OutputFormat::Csv
+        );
+        assert_eq!(
+            parse_format_str("Json").unwrap(),
+            crate::export::OutputFormat::Json
+        );
+        assert_eq!(
+            parse_format_str("MARKDOWN").unwrap(),
+            crate::export::OutputFormat::Markdown
+        );
+    }
+
+    #[test]
+    fn test_parse_format_str_with_whitespace() {
+        assert_eq!(
+            parse_format_str("  csv  ").unwrap(),
+            crate::export::OutputFormat::Csv
+        );
+    }
+
+    #[test]
+    fn test_parse_format_str_invalid() {
+        let result = parse_format_str("yaml");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("yaml"));
+        assert!(err_msg.contains("Valid values"));
+    }
+
+    #[test]
+    fn test_parse_format_str_empty() {
+        let result = parse_format_str("");
+        assert!(result.is_err());
     }
 
     #[test]
