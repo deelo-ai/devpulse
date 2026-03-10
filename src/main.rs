@@ -4,6 +4,7 @@ mod filter;
 mod git;
 mod group;
 mod scanner;
+mod since;
 mod summary;
 mod table;
 mod tui;
@@ -80,6 +81,17 @@ struct Cli {
     /// Each group gets a sub-header and per-group summary stats.
     #[arg(long, short = 'g')]
     group: bool,
+
+    /// Only show projects with commits within the given time window.
+    /// Format: <number><unit> where unit is d (days), w (weeks), or m (months).
+    /// Examples: 7d, 2w, 1m
+    #[arg(long, value_name = "DURATION")]
+    since: Option<String>,
+
+    /// Include projects with no commits when using --since.
+    /// By default, projects with no commit history are excluded.
+    #[arg(long)]
+    include_empty: bool,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -135,6 +147,8 @@ fn scan_and_display(
     depth: u32,
     output: Option<&std::path::Path>,
     group_by_parent: bool,
+    since_duration: Option<&since::SinceDuration>,
+    include_empty: bool,
 ) -> Result<()> {
     let project_paths = scanner::discover_projects_with_depth(scan_path, ignore, depth)?;
 
@@ -156,6 +170,11 @@ fn scan_and_display(
     }
 
     let mut statuses = filter::apply_filters(statuses, filters);
+
+    // Apply --since filter if provided
+    if let Some(since) = since_duration {
+        statuses = since::filter_since(statuses, since, chrono::Utc::now(), include_empty);
+    }
 
     sort_statuses(&mut statuses, sort);
 
@@ -267,6 +286,15 @@ fn main() -> Result<()> {
         vec![scan_path.clone()]
     };
 
+    // Resolve --since: CLI flag takes priority, then config
+    let since_duration = if let Some(ref s) = cli.since {
+        Some(since::parse_duration(s)?)
+    } else if let Some(ref s) = cfg.since {
+        Some(since::parse_duration(s)?)
+    } else {
+        None
+    };
+
     let ignore = &cfg.ignore;
 
     if cli.tui {
@@ -293,6 +321,8 @@ fn main() -> Result<()> {
                 depth,
                 cli.output.as_deref(),
                 cli.group,
+                since_duration.as_ref(),
+                cli.include_empty,
             )?;
         }
     }

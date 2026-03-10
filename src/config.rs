@@ -18,6 +18,8 @@ pub struct Config {
     pub depth: Option<u32>,
     /// Default output format: "table", "json", "csv", "markdown", or "md".
     pub format: Option<String>,
+    /// Default `--since` duration (e.g. "30d", "2w", "1m").
+    pub since: Option<String>,
 }
 
 /// Locate and load a `.devpulse.toml` config file.
