@@ -13,10 +13,12 @@ mod tui;
 mod types;
 mod watch;
 
+mod completions;
+
 use std::path::PathBuf;
 
 use anyhow::Result;
-use clap::{Parser, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 
 /// devpulse — Project Health Dashboard for Your Terminal
 #[derive(Parser)]
@@ -31,9 +33,14 @@ use clap::{Parser, ValueEnum};
                   devpulse ~/projects   Scan a specific directory\n  \
                   devpulse --sort name  Sort projects alphabetically\n  \
                   devpulse --watch      Refresh every 60s\n  \
-                  devpulse -w -i 30     Refresh every 30s"
+                  devpulse -w -i 30     Refresh every 30s\n  \
+                  devpulse completions bash  Generate bash completions"
 )]
 struct Cli {
+    /// Subcommand (e.g. completions)
+    #[command(subcommand)]
+    command: Option<Commands>,
+
     /// Directory to scan for projects [default: current directory]
     #[arg(default_value = ".")]
     path: PathBuf,
@@ -110,6 +117,18 @@ struct Cli {
     /// Can also be set via `theme` in .devpulse.toml.
     #[arg(long, value_name = "THEME")]
     theme: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Generate shell completions for bash, zsh, or fish.
+    ///
+    /// Install the output to enable tab-completion for all devpulse flags and arguments.
+    Completions {
+        /// Target shell: bash, zsh, or fish
+        #[arg(value_enum)]
+        shell: completions::ShellArg,
+    },
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -292,6 +311,12 @@ fn write_grouped_output(
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Handle subcommands first
+    if let Some(Commands::Completions { shell }) = &cli.command {
+        completions::generate(*shell, &mut Cli::command());
+        return Ok(());
+    }
 
     let scan_path = if cli.path.is_absolute() {
         cli.path.clone()

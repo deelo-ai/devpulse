@@ -160,6 +160,24 @@ NO_COLOR=1 devpulse              # Also works via environment variable
 
 Color priority: `--no-color` flag > `NO_COLOR` env var > config file > default (colors on).
 
+### Shell Completions
+
+Generate tab-completion scripts for your shell:
+
+```bash
+# Bash — add to ~/.bashrc
+devpulse completions bash >> ~/.bashrc
+
+# Zsh — add to fpath
+devpulse completions zsh > ~/.zfunc/_devpulse
+# Then add to ~/.zshrc: fpath=(~/.zfunc $fpath); autoload -Uz compinit && compinit
+
+# Fish
+devpulse completions fish > ~/.config/fish/completions/devpulse.fish
+```
+
+After installation, restart your shell or source the config file. Then `devpulse <tab>` will complete flags, subcommands, and values.
+
 ## Configuration
 
 Create a `.devpulse.toml` file in your project directory or home directory (`~/.devpulse.toml`):

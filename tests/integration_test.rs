@@ -1629,3 +1629,105 @@ fn test_theme_cli_overrides_config() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+// ─── Shell completions tests ───────────────────────────────────────────
+
+#[test]
+fn test_completions_bash() {
+    let output = Command::new(devpulse_bin())
+        .args(["completions", "bash"])
+        .output()
+        .expect("failed to run devpulse completions bash");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("_devpulse"),
+        "bash completions should define _devpulse function"
+    );
+    assert!(
+        stdout.contains("COMPREPLY"),
+        "bash completions should use COMPREPLY"
+    );
+}
+
+#[test]
+fn test_completions_zsh() {
+    let output = Command::new(devpulse_bin())
+        .args(["completions", "zsh"])
+        .output()
+        .expect("failed to run devpulse completions zsh");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("#compdef devpulse"),
+        "zsh completions should have #compdef header"
+    );
+}
+
+#[test]
+fn test_completions_fish() {
+    let output = Command::new(devpulse_bin())
+        .args(["completions", "fish"])
+        .output()
+        .expect("failed to run devpulse completions fish");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("devpulse"),
+        "fish completions should reference devpulse"
+    );
+    assert!(
+        stdout.contains("complete"),
+        "fish completions should use 'complete' command"
+    );
+}
+
+#[test]
+fn test_completions_invalid_shell() {
+    let output = Command::new(devpulse_bin())
+        .args(["completions", "powershell"])
+        .output()
+        .expect("failed to run devpulse");
+    assert!(
+        !output.status.success(),
+        "should fail for unsupported shell"
+    );
+}
+
+#[test]
+fn test_completions_contains_all_flags() {
+    let output = Command::new(devpulse_bin())
+        .args(["completions", "bash"])
+        .output()
+        .expect("failed to run devpulse completions bash");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for flag in &[
+        "--sort",
+        "--watch",
+        "--json",
+        "--tui",
+        "--filter",
+        "--depth",
+        "--no-color",
+        "--theme",
+        "--no-ci",
+    ] {
+        assert!(
+            stdout.contains(flag),
+            "bash completions should include flag '{}'",
+            flag
+        );
+    }
+}
