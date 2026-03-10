@@ -4,10 +4,7 @@
 
 Scan a directory of projects and instantly see the health of each one — git status, last activity, stale repos, dirty worktrees — all in a colored terminal table.
 
-No servers, no config files. Just run `devpulse`.
-
-![devpulse screenshot](https://github.com/deelo-ai/devpulse/assets/screenshot-placeholder.png)
-<!-- TODO: Replace with actual screenshot -->
+No servers, no config files required. Just run `devpulse`.
 
 ## Why?
 
@@ -31,13 +28,7 @@ curl -L https://github.com/deelo-ai/devpulse/releases/latest/download/devpulse-x
 sudo mv devpulse /usr/local/bin/
 ```
 
-### Homebrew (coming soon)
-
-```bash
-brew install deelo-ai/tap/devpulse
-```
-
-## Usage
+## Quick Start
 
 ```bash
 # Scan the current directory for projects
@@ -46,14 +37,17 @@ devpulse
 # Scan a specific directory
 devpulse ~/projects
 
-# Sort by name instead of activity
-devpulse --sort name
+# Show only dirty repos, sorted by name
+devpulse --filter dirty --sort name
 
-# Sort by status (dirty repos first)
-devpulse --sort status
+# Export as JSON
+devpulse --json
+
+# Watch mode — refresh every 30 seconds
+devpulse --watch --interval 30
 ```
 
-### Output
+## Output
 
 Each project shows:
 
@@ -67,7 +61,135 @@ Each project shows:
 
 Colors indicate staleness: **green** = active (< 1 week), **yellow** = aging (< 1 month), **red** = stale (> 1 month).
 
-## Building from source
+## Flags Reference
+
+### Sorting
+
+```bash
+devpulse --sort activity   # Most stale first (default)
+devpulse --sort name       # Alphabetical
+devpulse --sort status     # Dirty repos first, then clean
+```
+
+### Output Formats
+
+```bash
+devpulse --format table      # Terminal table with colors (default)
+devpulse --format json       # JSON output
+devpulse --json              # Shorthand for --format json
+devpulse --format csv        # Comma-separated values
+devpulse --format markdown   # Markdown table
+devpulse --format md         # Alias for markdown
+```
+
+### Filtering
+
+Filter projects by criteria. Multiple filters can be combined:
+
+```bash
+devpulse --filter dirty           # Only repos with uncommitted changes
+devpulse --filter clean           # Only clean repos
+devpulse --filter stale           # Repos with no commits in 30+ days
+devpulse --filter unpushed        # Repos ahead of remote
+devpulse --filter name:api        # Repos with "api" in the name
+devpulse -f dirty -f name:web     # Combine: dirty repos matching "web"
+```
+
+### Time Window
+
+Show only projects with recent activity:
+
+```bash
+devpulse --since 7d              # Active in last 7 days
+devpulse --since 2w              # Active in last 2 weeks
+devpulse --since 1m              # Active in last month
+devpulse --since 7d --include-empty  # Also include repos with no commits
+```
+
+### Scan Depth
+
+Control how deep to search for git repositories:
+
+```bash
+devpulse --depth 0    # Check only the target directory itself
+devpulse --depth 1    # Immediate children (default)
+devpulse --depth 2    # Two levels deep (nested project structures)
+```
+
+### Grouping
+
+Group projects by their parent directory, with per-group summary stats:
+
+```bash
+devpulse ~/code --depth 2 --group
+```
+
+### File Output
+
+Write results to a file instead of stdout (ANSI colors are stripped automatically):
+
+```bash
+devpulse --output report.json --format json
+devpulse -o status.csv --format csv
+devpulse -o dashboard.md --format markdown
+```
+
+### Watch Mode
+
+Continuously re-scan at an interval:
+
+```bash
+devpulse --watch                 # Refresh every 60 seconds
+devpulse -w -i 30                # Refresh every 30 seconds
+```
+
+### Interactive TUI
+
+Launch a terminal UI for browsing projects:
+
+```bash
+devpulse --tui
+```
+
+### Colors
+
+```bash
+devpulse --no-color              # Disable ANSI colors
+NO_COLOR=1 devpulse              # Also works via environment variable
+```
+
+Color priority: `--no-color` flag > `NO_COLOR` env var > config file > default (colors on).
+
+## Configuration
+
+Create a `.devpulse.toml` file in your project directory or home directory (`~/.devpulse.toml`):
+
+```toml
+# Directories to scan (used when no path argument given)
+scan_paths = ["~/projects", "~/work"]
+
+# Default sort order: "activity", "name", or "status"
+sort = "name"
+
+# Default output format: "table", "json", "csv", "markdown"
+format = "table"
+
+# Default --since duration
+since = "30d"
+
+# Scan depth (default: 1)
+depth = 2
+
+# Directories to ignore when scanning
+ignore = ["node_modules", "target", ".archive"]
+
+# Disable colors (default: true)
+color = true
+```
+
+CLI flags always take priority over config file values.
+
+## Building from Source
 
 ```bash
 git clone https://github.com/deelo-ai/devpulse.git
@@ -80,11 +202,11 @@ cargo build --release
 Contributions are welcome! Please:
 
 1. Fork the repo and create a feature branch
-2. Run `cargo fmt` and `cargo clippy` before committing
+2. Run `cargo fmt` and `cargo clippy -- -D warnings` before committing
 3. Add tests for new functionality
 4. Open a PR with a clear description of the change
 
-See [open issues](https://github.com/deelo-ai/devpulse/issues) for ideas on what to work on.
+See [open issues](https://github.com/deelo-ai/devpulse/issues) for ideas.
 
 ## License
 
