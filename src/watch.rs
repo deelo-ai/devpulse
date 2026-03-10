@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use chrono::Local;
 
 use crate::SortBy;
+use crate::export::OutputFormat;
 use crate::filter::ProjectFilter;
 
 /// Clear the terminal screen and move cursor to top-left.
@@ -51,7 +52,7 @@ pub fn interruptible_sleep(duration: Duration, stop: &AtomicBool) -> bool {
 pub fn run_watch_loop(
     scan_path: &Path,
     sort: &SortBy,
-    json: bool,
+    format: &OutputFormat,
     interval_secs: u64,
     filters: &[ProjectFilter],
     depth: u32,
@@ -69,7 +70,7 @@ pub fn run_watch_loop(
         print!("{}", format_watch_header(scan_path, interval_secs));
         io::stdout().flush().context("Failed to flush stdout")?;
 
-        crate::scan_and_display(scan_path, sort, json, filters, &[], depth)?;
+        crate::scan_and_display(scan_path, sort, format, filters, &[], depth)?;
 
         if interruptible_sleep(Duration::from_secs(interval_secs), &stop) {
             println!("\nExiting watch mode.");

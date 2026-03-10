@@ -1,4 +1,5 @@
 mod config;
+mod export;
 mod filter;
 mod git;
 mod scanner;
@@ -37,9 +38,13 @@ struct Cli {
     #[arg(long, default_value = "activity")]
     sort: SortBy,
 
-    /// Output results as JSON instead of a table
+    /// Output results as JSON instead of a table (shorthand for --format json)
     #[arg(long)]
     json: bool,
+
+    /// Output format: table, json, csv, markdown (or md)
+    #[arg(long, value_enum)]
+    format: Option<export::OutputFormat>,
 
     /// Watch mode: re-run at a regular interval
     #[arg(long, short = 'w')]
@@ -112,7 +117,7 @@ fn parse_filters(filter_args: &[String]) -> Result<Vec<filter::ProjectFilter>> {
 fn scan_and_display(
     scan_path: &std::path::Path,
     sort: &SortBy,
-    json: bool,
+    format: &export::OutputFormat,
     filters: &[filter::ProjectFilter],
     ignore: &[String],
     depth: u32,
@@ -140,19 +145,7 @@ fn scan_and_display(
 
     sort_statuses(&mut statuses, sort);
 
-    if json {
-        let summary = summary::Summary::from_statuses(&statuses);
-        let output = serde_json::json!({
-            "projects": statuses,
-            "summary": summary,
-        });
-        println!("{}", serde_json::to_string_pretty(&output)?);
-    } else {
-        table::print_table(&statuses);
-        let summary = summary::Summary::from_statuses(&statuses);
-        summary.print_colored();
-        println!();
-    }
+    export::write_output(&statuses, format)?;
 
     Ok(())
 }
@@ -182,6 +175,15 @@ fn main() -> Result<()> {
     // Resolve depth: CLI flag takes priority, then config, then default of 1
     let depth = cli.depth.or(cfg.depth).unwrap_or(1);
 
+    // Resolve output format: --format takes priority, --json is shorthand
+    let output_format = if let Some(fmt) = cli.format {
+        fmt
+    } else if cli.json {
+        export::OutputFormat::Json
+    } else {
+        export::OutputFormat::Table
+    };
+
     // Use config scan_paths if the user didn't specify a path (default is ".")
     let scan_paths = if cli.path.as_os_str() == "." && !cfg.scan_paths.is_empty() {
         config::resolve_scan_paths(&cfg, &scan_path)
@@ -198,7 +200,7 @@ fn main() -> Result<()> {
         watch::run_watch_loop(
             scan_paths.first().unwrap_or(&scan_path),
             &sort,
-            cli.json,
+            &output_format,
             cli.interval,
             &filters,
             depth,
@@ -206,7 +208,7 @@ fn main() -> Result<()> {
     } else {
         for path in &scan_paths {
             println!("Scanning {}...\n", path.display());
-            scan_and_display(path, &sort, cli.json, &filters, ignore, depth)?;
+            scan_and_display(path, &sort, &output_format, &filters, ignore, depth)?;
         }
     }
 
