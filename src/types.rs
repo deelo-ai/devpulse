@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
+use crate::ci::CiStatus;
+
 /// Status information for a single project
 #[derive(Clone, Debug, Serialize)]
 pub struct ProjectStatus {
@@ -29,4 +31,6 @@ pub struct ProjectStatus {
     pub stash_count: usize,
     /// Subject line of the last commit (first line of commit message)
     pub last_commit_message: Option<String>,
+    /// CI status from GitHub Actions (if available)
+    pub ci_status: CiStatus,
 }

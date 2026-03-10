@@ -276,6 +276,7 @@ mod tests {
             remote_url: None,
             stash_count: 0,
             last_commit_message: Some("initial commit".to_string()),
+            ci_status: crate::ci::CiStatus::Unknown,
         }
     }
 

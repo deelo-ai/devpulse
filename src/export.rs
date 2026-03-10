@@ -57,6 +57,7 @@ const CSV_HEADERS: &[&str] = &[
     "Ahead",
     "Behind",
     "Stash",
+    "CI",
     "Remote URL",
     "Last Commit Message",
 ];
@@ -88,6 +89,8 @@ pub fn format_csv(statuses: &[ProjectStatus]) -> Result<String> {
 
         let message = s.last_commit_message.as_deref().unwrap_or("");
 
+        let ci_str = format!("{}", s.ci_status);
+
         let row = [
             csv_escape(&s.name),
             csv_escape(&s.branch),
@@ -97,6 +100,7 @@ pub fn format_csv(statuses: &[ProjectStatus]) -> Result<String> {
             s.ahead.to_string(),
             s.behind.to_string(),
             s.stash_count.to_string(),
+            ci_str,
             csv_escape(remote),
             csv_escape(message),
         ];
@@ -113,10 +117,10 @@ pub fn format_markdown(statuses: &[ProjectStatus]) -> Result<String> {
 
     // Header
     out.push_str(
-        "| Project | Branch | Status | Changed | Last Commit | Ahead/Behind | Stash | Message |\n",
+        "| Project | Branch | Status | Changed | Last Commit | Ahead/Behind | Stash | CI | Message |\n",
     );
     out.push_str(
-        "|---------|--------|--------|--------:|-------------|-------------:|------:|---------|\n",
+        "|---------|--------|--------|--------:|-------------|-------------:|------:|:--:|---------|\n",
     );
 
     let now = Utc::now();
@@ -147,8 +151,10 @@ pub fn format_markdown(statuses: &[ProjectStatus]) -> Result<String> {
             None => "—".to_string(),
         };
 
+        let ci_str = format!("{}", s.ci_status);
+
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             md_escape(&s.name),
             md_escape(&s.branch),
             status_str,
@@ -156,6 +162,7 @@ pub fn format_markdown(statuses: &[ProjectStatus]) -> Result<String> {
             last_commit_str,
             ahead_behind,
             stash,
+            ci_str,
             md_escape(&message),
         ));
     }
@@ -312,6 +319,7 @@ mod tests {
             remote_url: Some("https://github.com/example/repo".to_string()),
             stash_count: stash,
             last_commit_message: None,
+            ci_status: crate::ci::CiStatus::Unknown,
         }
     }
 
@@ -320,7 +328,7 @@ mod tests {
         let result = format_csv(&[]).unwrap();
         assert_eq!(
             result,
-            "Project,Branch,Status,Changed,Last Commit,Ahead,Behind,Stash,Remote URL,Last Commit Message\n"
+            "Project,Branch,Status,Changed,Last Commit,Ahead,Behind,Stash,CI,Remote URL,Last Commit Message\n"
         );
     }
 

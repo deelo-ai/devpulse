@@ -36,6 +36,7 @@ pub fn get_project_status(path: &Path) -> Result<ProjectStatus> {
         remote_url,
         stash_count,
         last_commit_message,
+        ci_status: crate::ci::CiStatus::Unknown,
     })
 }
 

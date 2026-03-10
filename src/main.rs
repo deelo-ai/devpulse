@@ -1,3 +1,4 @@
+mod ci;
 mod config;
 mod export;
 mod filter;
@@ -98,6 +99,11 @@ struct Cli {
     /// Priority: --no-color flag > NO_COLOR env > config > default (colors on).
     #[arg(long)]
     no_color: bool,
+
+    /// Skip CI status checks (faster, no network requests).
+    /// By default, devpulse queries GitHub Actions for projects with GitHub remotes.
+    #[arg(long)]
+    no_ci: bool,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -156,6 +162,7 @@ fn scan_and_display(
     since_duration: Option<&since::SinceDuration>,
     include_empty: bool,
     use_color: bool,
+    no_ci: bool,
 ) -> Result<()> {
     let project_paths = scanner::discover_projects_with_depth(scan_path, ignore, depth)?;
 
@@ -189,6 +196,17 @@ fn scan_and_display(
     // Apply --since filter if provided
     if let Some(since) = since_duration {
         statuses = since::filter_since(statuses, since, chrono::Utc::now(), include_empty);
+    }
+
+    // Fetch CI statuses from GitHub Actions (unless --no-ci)
+    if !no_ci {
+        let cache = ci::CiCache::new(300); // 5-minute cache TTL
+        let ci_statuses = ci::fetch_ci_statuses(&statuses, &cache);
+        for status in &mut statuses {
+            if let Some(ci) = ci_statuses.get(&status.name) {
+                status.ci_status = ci.clone();
+            }
+        }
     }
 
     sort_statuses(&mut statuses, sort);
@@ -348,6 +366,7 @@ fn main() -> Result<()> {
                 since_duration.as_ref(),
                 cli.include_empty,
                 use_color,
+                cli.no_ci,
             )?;
         }
     }

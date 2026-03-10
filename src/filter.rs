@@ -108,6 +108,7 @@ mod tests {
             remote_url: None,
             stash_count: 0,
             last_commit_message: None,
+            ci_status: crate::ci::CiStatus::Unknown,
         }
     }
 

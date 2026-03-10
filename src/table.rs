@@ -28,9 +28,15 @@ pub fn print_table(statuses: &[ProjectStatus]) {
         .unwrap_or(6)
         .max(6);
 
+    // Check if any project has a non-Unknown CI status
+    let show_ci = statuses
+        .iter()
+        .any(|s| s.ci_status != crate::ci::CiStatus::Unknown);
+
     // Print header
+    let ci_header = if show_ci { "  CI" } else { "" };
     let header = format!(
-        "  {:<name_w$}  {:<branch_w$}  {:>8}  {:>7}  {:>14}  {:>12}  {:>5}  {}",
+        "  {:<name_w$}  {:<branch_w$}  {:>8}  {:>7}  {:>14}  {:>12}  {:>5}{ci_h}  {}",
         "Project",
         "Branch",
         "Status",
@@ -41,11 +47,15 @@ pub fn print_table(statuses: &[ProjectStatus]) {
         "Message",
         name_w = name_width,
         branch_w = branch_width,
+        ci_h = ci_header,
     );
     println!("{}", header.bold());
+    let ci_width = if show_ci { 4 } else { 0 };
     println!(
         "  {}",
-        "─".repeat(name_width + branch_width + 8 + 7 + 14 + 12 + 5 + MESSAGE_MAX_LEN + 20)
+        "─".repeat(
+            name_width + branch_width + 8 + 7 + 14 + 12 + 5 + ci_width + MESSAGE_MAX_LEN + 20
+        )
     );
 
     let now = Utc::now();
@@ -111,8 +121,14 @@ pub fn print_table(statuses: &[ProjectStatus]) {
             None => message_str.with(Color::DarkGrey),
         };
 
+        let ci_col = if show_ci {
+            format!("  {}", s.ci_status)
+        } else {
+            String::new()
+        };
+
         println!(
-            "  {:<name_w$}  {:<branch_w$}  {}  {}  {}  {:>12}  {}  {}",
+            "  {:<name_w$}  {:<branch_w$}  {}  {}  {}  {:>12}  {}{ci}  {}",
             s.name,
             s.branch,
             status_colored,
@@ -123,6 +139,7 @@ pub fn print_table(statuses: &[ProjectStatus]) {
             message_colored,
             name_w = name_width,
             branch_w = branch_width,
+            ci = ci_col,
         );
     }
 
@@ -140,6 +157,11 @@ pub fn format_table_plain(statuses: &[ProjectStatus]) -> String {
 
     let mut out = String::new();
 
+    // Check if any project has a non-Unknown CI status
+    let show_ci = statuses
+        .iter()
+        .any(|s| s.ci_status != crate::ci::CiStatus::Unknown);
+
     // Calculate column widths
     let name_width = statuses
         .iter()
@@ -154,9 +176,10 @@ pub fn format_table_plain(statuses: &[ProjectStatus]) -> String {
         .unwrap_or(6)
         .max(6);
 
+    let ci_header = if show_ci { "  CI" } else { "" };
     // Header
     out.push_str(&format!(
-        "  {:<name_w$}  {:<branch_w$}  {:>8}  {:>7}  {:>14}  {:>12}  {:>5}  {}\n",
+        "  {:<name_w$}  {:<branch_w$}  {:>8}  {:>7}  {:>14}  {:>12}  {:>5}{ci_h}  {}\n",
         "Project",
         "Branch",
         "Status",
@@ -167,10 +190,14 @@ pub fn format_table_plain(statuses: &[ProjectStatus]) -> String {
         "Message",
         name_w = name_width,
         branch_w = branch_width,
+        ci_h = ci_header,
     ));
+    let ci_width = if show_ci { 4 } else { 0 };
     out.push_str(&format!(
         "  {}\n",
-        "-".repeat(name_width + branch_width + 8 + 7 + 14 + 12 + 5 + MESSAGE_MAX_LEN + 20)
+        "-".repeat(
+            name_width + branch_width + 8 + 7 + 14 + 12 + 5 + ci_width + MESSAGE_MAX_LEN + 20
+        )
     ));
 
     let now = Utc::now();
@@ -196,8 +223,14 @@ pub fn format_table_plain(statuses: &[ProjectStatus]) -> String {
             None => "—".to_string(),
         };
 
+        let ci_col = if show_ci {
+            format!("  {}", s.ci_status)
+        } else {
+            String::new()
+        };
+
         out.push_str(&format!(
-            "  {:<name_w$}  {:<branch_w$}  {:>8}  {:>7}  {:>14}  {:>12}  {:>5}  {}\n",
+            "  {:<name_w$}  {:<branch_w$}  {:>8}  {:>7}  {:>14}  {:>12}  {:>5}{ci}  {}\n",
             s.name,
             s.branch,
             status_str,
@@ -208,6 +241,7 @@ pub fn format_table_plain(statuses: &[ProjectStatus]) -> String {
             message_str,
             name_w = name_width,
             branch_w = branch_width,
+            ci = ci_col,
         ));
     }
 
@@ -261,6 +295,7 @@ mod tests {
             remote_url: None,
             stash_count: 0,
             last_commit_message: Some("initial commit".to_string()),
+            ci_status: crate::ci::CiStatus::Unknown,
         }
     }
 

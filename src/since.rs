@@ -143,6 +143,7 @@ mod tests {
             remote_url: None,
             stash_count: 0,
             last_commit_message: None,
+            ci_status: crate::ci::CiStatus::Unknown,
         }
     }
 
@@ -305,6 +306,7 @@ mod tests {
             remote_url: None,
             stash_count: 0,
             last_commit_message: None,
+            ci_status: crate::ci::CiStatus::Unknown,
         }];
         let since = parse_duration("7d").unwrap();
         let result = filter_since(statuses, &since, now, false);

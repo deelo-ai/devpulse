@@ -83,6 +83,7 @@ pub fn run_watch_loop(
             None,
             false,
             use_color,
+            false, // CI enabled in watch mode
         )?;
 
         if interruptible_sleep(Duration::from_secs(interval_secs), &stop) {
