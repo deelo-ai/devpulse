@@ -82,3 +82,19 @@ That's it. No CI, no deps, no TUI interactions yet. Ship the simplest useful thi
 - Config file for custom project paths
 - Export to JSON/markdown
 - Git branch cleanup suggestions
+
+## Quality Gates (v0.1.0 Release Criteria)
+
+Before tagging v0.1.0, ALL of the following must be true:
+
+1. **Integration tests exist** in `tests/` directory — minimum 15 tests
+2. **Integration tests verify actual binary output** against known git repo states
+3. **All flags tested end-to-end:** --json, --filter, --since, --group, --sort, --no-color, --output, --csv, --markdown
+4. **Error cases tested:** nonexistent dir, empty dir, not a git repo, permission errors
+5. **All unit tests pass** (`cargo test`)
+6. **Clippy clean** (`cargo clippy -- -D warnings`)
+7. **No unwrap() in production code**
+8. **README is accurate** — every documented feature actually works as described
+
+No new features until these gates are met. Test coverage and verified output come first.
+Revenue depends on trust. Trust depends on the tool doing exactly what it says.
