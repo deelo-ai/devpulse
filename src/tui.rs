@@ -118,14 +118,14 @@ fn open_url(url: &str) -> Result<()> {
 }
 
 /// Scan projects from the given path and return their statuses.
+/// Uses rayon for parallel git status collection across projects.
 pub fn scan_projects(scan_path: &Path) -> Result<Vec<ProjectStatus>> {
+    use rayon::prelude::*;
     let project_paths = scanner::discover_projects(scan_path)?;
-    let mut statuses = Vec::new();
-    for path in &project_paths {
-        if let Ok(status) = git::get_project_status(path) {
-            statuses.push(status);
-        }
-    }
+    let statuses: Vec<ProjectStatus> = project_paths
+        .par_iter()
+        .filter_map(|path| git::get_project_status(path).ok())
+        .collect();
     Ok(statuses)
 }
 

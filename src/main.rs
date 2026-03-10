@@ -168,9 +168,17 @@ fn scan_and_display(
         return Ok(());
     }
 
+    let results: Vec<_> = {
+        use rayon::prelude::*;
+        project_paths
+            .par_iter()
+            .map(|path| (path.clone(), git::get_project_status(path)))
+            .collect()
+    };
+
     let mut statuses = Vec::new();
-    for path in &project_paths {
-        match git::get_project_status(path) {
+    for (path, result) in results {
+        match result {
             Ok(status) => statuses.push(status),
             Err(e) => eprintln!("  Warning: skipping {}: {}", path.display(), e),
         }
