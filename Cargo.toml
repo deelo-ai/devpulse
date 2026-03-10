@@ -8,6 +8,8 @@ repository = "https://github.com/deelo-ai/devpulse"
 homepage = "https://github.com/deelo-ai/devpulse"
 keywords = ["git", "dashboard", "terminal", "developer-tools", "cli"]
 categories = ["command-line-utilities", "development-tools"]
+readme = "README.md"
+authors = ["deelo-ai"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

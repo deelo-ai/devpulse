@@ -12,7 +12,13 @@ If you work on multiple projects, it's easy to lose track of which repos have un
 
 ## Installation
 
-### From source (cargo)
+### Homebrew (macOS / Linux)
+
+```bash
+brew install deelo-ai/tap/devpulse
+```
+
+### From crates.io
 
 ```bash
 cargo install devpulse
@@ -23,8 +29,20 @@ cargo install devpulse
 Download the latest binary for your platform from [GitHub Releases](https://github.com/deelo-ai/devpulse/releases).
 
 ```bash
-# Example: Linux x86_64
+# macOS (Apple Silicon)
+curl -L https://github.com/deelo-ai/devpulse/releases/latest/download/devpulse-aarch64-apple-darwin.tar.gz | tar xz
+sudo mv devpulse /usr/local/bin/
+
+# macOS (Intel)
+curl -L https://github.com/deelo-ai/devpulse/releases/latest/download/devpulse-x86_64-apple-darwin.tar.gz | tar xz
+sudo mv devpulse /usr/local/bin/
+
+# Linux (x86_64)
 curl -L https://github.com/deelo-ai/devpulse/releases/latest/download/devpulse-x86_64-unknown-linux-gnu.tar.gz | tar xz
+sudo mv devpulse /usr/local/bin/
+
+# Linux (aarch64)
+curl -L https://github.com/deelo-ai/devpulse/releases/latest/download/devpulse-aarch64-unknown-linux-gnu.tar.gz | tar xz
 sudo mv devpulse /usr/local/bin/
 ```
 
