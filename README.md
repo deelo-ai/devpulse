@@ -76,6 +76,7 @@ Each project shows:
 | Status | Clean or dirty (with uncommitted file count) |
 | Last Commit | Time since last commit, color-coded |
 | Remote | Ahead/behind remote tracking branch |
+| CI | GitHub Actions status: ✅ passing, ❌ failing, ⏳ running (use `--no-ci` to skip) |
 
 Colors indicate staleness: **green** = active (< 1 week), **yellow** = aging (< 1 month), **red** = stale (> 1 month).
 
@@ -169,6 +170,28 @@ Launch a terminal UI for browsing projects:
 devpulse --tui
 ```
 
+### CI Status
+
+By default, devpulse queries GitHub Actions for projects with a GitHub remote and shows a CI column with ✅ (passing), ❌ (failing), or ⏳ (in progress):
+
+```bash
+devpulse                         # CI status shown by default
+devpulse --no-ci                 # Skip CI checks (faster, no network)
+```
+
+### Color Themes
+
+Choose a built-in color theme:
+
+```bash
+devpulse --theme default             # Default terminal colors
+devpulse --theme dracula             # Dracula color scheme
+devpulse --theme catppuccin-mocha    # Catppuccin Mocha palette
+devpulse --theme nord                # Nord color scheme
+```
+
+Themes can also be set in `.devpulse.toml` (see [Configuration](#configuration)). CLI flag takes priority.
+
 ### Colors
 
 ```bash
@@ -221,6 +244,9 @@ ignore = ["node_modules", "target", ".archive"]
 
 # Disable colors (default: true)
 color = true
+
+# Color theme: "default", "dracula", "catppuccin-mocha", "nord"
+theme = "dracula"
 ```
 
 CLI flags always take priority over config file values.
