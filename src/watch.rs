@@ -54,6 +54,7 @@ pub fn run_watch_loop(
     json: bool,
     interval_secs: u64,
     filters: &[ProjectFilter],
+    depth: u32,
 ) -> Result<()> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_clone = Arc::clone(&stop);
@@ -68,7 +69,7 @@ pub fn run_watch_loop(
         print!("{}", format_watch_header(scan_path, interval_secs));
         io::stdout().flush().context("Failed to flush stdout")?;
 
-        crate::scan_and_display(scan_path, sort, json, filters, &[])?;
+        crate::scan_and_display(scan_path, sort, json, filters, &[], depth)?;
 
         if interruptible_sleep(Duration::from_secs(interval_secs), &stop) {
             println!("\nExiting watch mode.");

@@ -57,6 +57,13 @@ struct Cli {
     /// Values: dirty, clean, stale, unpushed, name:<substring>
     #[arg(long, short = 'f')]
     filter: Vec<String>,
+
+    /// How many directory levels deep to scan for git projects [default: 1]
+    /// 0 = check only the target directory itself
+    /// 1 = immediate children (default)
+    /// 2+ = recursive scanning
+    #[arg(long, short = 'd')]
+    depth: Option<u32>,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -108,8 +115,9 @@ fn scan_and_display(
     json: bool,
     filters: &[filter::ProjectFilter],
     ignore: &[String],
+    depth: u32,
 ) -> Result<()> {
-    let project_paths = scanner::discover_projects_filtered(scan_path, ignore)?;
+    let project_paths = scanner::discover_projects_with_depth(scan_path, ignore, depth)?;
 
     if project_paths.is_empty() {
         println!(
@@ -171,6 +179,9 @@ fn main() -> Result<()> {
 
     let filters = parse_filters(&cli.filter)?;
 
+    // Resolve depth: CLI flag takes priority, then config, then default of 1
+    let depth = cli.depth.or(cfg.depth).unwrap_or(1);
+
     // Use config scan_paths if the user didn't specify a path (default is ".")
     let scan_paths = if cli.path.as_os_str() == "." && !cfg.scan_paths.is_empty() {
         config::resolve_scan_paths(&cfg, &scan_path)
@@ -190,11 +201,12 @@ fn main() -> Result<()> {
             cli.json,
             cli.interval,
             &filters,
+            depth,
         )?;
     } else {
         for path in &scan_paths {
             println!("Scanning {}...\n", path.display());
-            scan_and_display(path, &sort, cli.json, &filters, ignore)?;
+            scan_and_display(path, &sort, cli.json, &filters, ignore, depth)?;
         }
     }
 

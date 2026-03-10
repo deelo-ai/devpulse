@@ -14,6 +14,8 @@ pub struct Config {
     pub sort: Option<String>,
     /// Directory names to ignore when scanning.
     pub ignore: Vec<String>,
+    /// How many levels deep to scan for git projects (default: 1).
+    pub depth: Option<u32>,
 }
 
 /// Locate and load a `.devpulse.toml` config file.
@@ -211,6 +213,34 @@ sort = "status"
         let config = Config::default();
         let paths = resolve_scan_paths(&config, Path::new("/base"));
         assert!(paths.is_empty());
+    }
+
+    #[test]
+    fn test_parse_config_with_depth() {
+        let dir = tempfile::tempdir().unwrap();
+        write_temp_config(
+            dir.path(),
+            r#"
+depth = 3
+"#,
+        );
+
+        let config = load_config(dir.path()).unwrap();
+        assert_eq!(config.depth, Some(3));
+    }
+
+    #[test]
+    fn test_parse_config_without_depth_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        write_temp_config(
+            dir.path(),
+            r#"
+sort = "name"
+"#,
+        );
+
+        let config = load_config(dir.path()).unwrap();
+        assert_eq!(config.depth, None);
     }
 
     #[test]
