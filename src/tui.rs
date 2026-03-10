@@ -366,6 +366,7 @@ mod tests {
             behind: 0,
             remote_url: remote_url.map(|s| s.to_string()),
             stash_count: 0,
+            last_commit_message: None,
         }
     }
 

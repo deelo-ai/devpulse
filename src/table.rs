@@ -1,7 +1,11 @@
 use chrono::Utc;
 use crossterm::style::{Color, Stylize};
 
+use crate::git::truncate_message;
 use crate::types::ProjectStatus;
+
+/// Maximum display width for commit messages in the table.
+const MESSAGE_MAX_LEN: usize = 50;
 
 /// Print a colored table of project statuses.
 pub fn print_table(statuses: &[ProjectStatus]) {
@@ -26,7 +30,7 @@ pub fn print_table(statuses: &[ProjectStatus]) {
 
     // Print header
     let header = format!(
-        "  {:<name_w$}  {:<branch_w$}  {:>8}  {:>7}  {:>14}  {:>12}  {}",
+        "  {:<name_w$}  {:<branch_w$}  {:>8}  {:>7}  {:>14}  {:>12}  {:>5}  {}",
         "Project",
         "Branch",
         "Status",
@@ -34,13 +38,14 @@ pub fn print_table(statuses: &[ProjectStatus]) {
         "Last Commit",
         "Ahead/Behind",
         "Stash",
+        "Message",
         name_w = name_width,
         branch_w = branch_width,
     );
     println!("{}", header.bold());
     println!(
         "  {}",
-        "─".repeat(name_width + branch_width + 8 + 7 + 14 + 12 + 8 + 14)
+        "─".repeat(name_width + branch_width + 8 + 7 + 14 + 12 + 5 + MESSAGE_MAX_LEN + 20)
     );
 
     let now = Utc::now();
@@ -97,8 +102,17 @@ pub fn print_table(statuses: &[ProjectStatus]) {
             format!("{:>5}", stash_str).with(Color::Cyan)
         };
 
+        let message_str = match &s.last_commit_message {
+            Some(msg) => truncate_message(msg, MESSAGE_MAX_LEN),
+            None => "—".to_string(),
+        };
+        let message_colored = match &s.last_commit_message {
+            Some(_) => message_str.with(Color::White),
+            None => message_str.with(Color::DarkGrey),
+        };
+
         println!(
-            "  {:<name_w$}  {:<branch_w$}  {}  {}  {}  {:>12}  {}",
+            "  {:<name_w$}  {:<branch_w$}  {}  {}  {}  {:>12}  {}  {}",
             s.name,
             s.branch,
             status_colored,
@@ -106,6 +120,7 @@ pub fn print_table(statuses: &[ProjectStatus]) {
             last_commit_colored,
             ahead_behind,
             stash_colored,
+            message_colored,
             name_w = name_width,
             branch_w = branch_width,
         );

@@ -56,6 +56,7 @@ const CSV_HEADERS: &[&str] = &[
     "Behind",
     "Stash",
     "Remote URL",
+    "Last Commit Message",
 ];
 
 /// Escape a CSV field: wrap in quotes if it contains commas, quotes, or newlines.
@@ -83,6 +84,8 @@ pub fn format_csv(statuses: &[ProjectStatus]) -> Result<String> {
         };
         let remote = s.remote_url.as_deref().unwrap_or("");
 
+        let message = s.last_commit_message.as_deref().unwrap_or("");
+
         let row = [
             csv_escape(&s.name),
             csv_escape(&s.branch),
@@ -93,6 +96,7 @@ pub fn format_csv(statuses: &[ProjectStatus]) -> Result<String> {
             s.behind.to_string(),
             s.stash_count.to_string(),
             csv_escape(remote),
+            csv_escape(message),
         ];
         out.push_str(&row.join(","));
         out.push('\n');
@@ -106,8 +110,12 @@ pub fn format_markdown(statuses: &[ProjectStatus]) -> Result<String> {
     let mut out = String::new();
 
     // Header
-    out.push_str("| Project | Branch | Status | Changed | Last Commit | Ahead/Behind | Stash |\n");
-    out.push_str("|---------|--------|--------|--------:|-------------|-------------:|------:|\n");
+    out.push_str(
+        "| Project | Branch | Status | Changed | Last Commit | Ahead/Behind | Stash | Message |\n",
+    );
+    out.push_str(
+        "|---------|--------|--------|--------:|-------------|-------------:|------:|---------|\n",
+    );
 
     let now = Utc::now();
 
@@ -132,8 +140,13 @@ pub fn format_markdown(statuses: &[ProjectStatus]) -> Result<String> {
             s.stash_count.to_string()
         };
 
+        let message = match &s.last_commit_message {
+            Some(msg) => crate::git::truncate_message(msg, 50),
+            None => "—".to_string(),
+        };
+
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} | {} |\n",
             md_escape(&s.name),
             md_escape(&s.branch),
             status_str,
@@ -141,6 +154,7 @@ pub fn format_markdown(statuses: &[ProjectStatus]) -> Result<String> {
             last_commit_str,
             ahead_behind,
             stash,
+            md_escape(&message),
         ));
     }
 
@@ -250,6 +264,7 @@ mod tests {
             behind,
             remote_url: Some("https://github.com/example/repo".to_string()),
             stash_count: stash,
+            last_commit_message: None,
         }
     }
 
@@ -258,7 +273,7 @@ mod tests {
         let result = format_csv(&[]).unwrap();
         assert_eq!(
             result,
-            "Project,Branch,Status,Changed,Last Commit,Ahead,Behind,Stash,Remote URL\n"
+            "Project,Branch,Status,Changed,Last Commit,Ahead,Behind,Stash,Remote URL,Last Commit Message\n"
         );
     }
 

@@ -27,4 +27,6 @@ pub struct ProjectStatus {
     pub remote_url: Option<String>,
     /// Number of stash entries
     pub stash_count: usize,
+    /// Subject line of the last commit (first line of commit message)
+    pub last_commit_message: Option<String>,
 }

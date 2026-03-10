@@ -22,6 +22,7 @@ pub fn get_project_status(path: &Path) -> Result<ProjectStatus> {
     let (ahead, behind) = get_ahead_behind(&repo);
     let remote_url = get_remote_url(&repo);
     let stash_count = get_stash_count(&repo);
+    let last_commit_message = get_last_commit_message(&repo);
 
     Ok(ProjectStatus {
         name,
@@ -34,6 +35,7 @@ pub fn get_project_status(path: &Path) -> Result<ProjectStatus> {
         behind,
         remote_url,
         stash_count,
+        last_commit_message,
     })
 }
 
@@ -133,6 +135,32 @@ fn get_stash_count(repo: &Repository) -> usize {
         true // continue iterating
     });
     count
+}
+
+/// Get the subject line (first line) of the last commit message.
+/// Returns `None` for empty repos with no commits.
+fn get_last_commit_message(repo: &Repository) -> Option<String> {
+    let head = repo.head().ok()?;
+    let commit = head.peel_to_commit().ok()?;
+    let message = commit.message()?;
+    // Take only the first line (subject)
+    let subject = message.lines().next().unwrap_or("").trim().to_string();
+    if subject.is_empty() {
+        None
+    } else {
+        Some(subject)
+    }
+}
+
+/// Truncate a string to `max_len` characters, appending "…" if truncated.
+/// Operates on char boundaries to avoid splitting multi-byte characters.
+pub fn truncate_message(msg: &str, max_len: usize) -> String {
+    if msg.chars().count() <= max_len {
+        msg.to_string()
+    } else {
+        let truncated: String = msg.chars().take(max_len.saturating_sub(1)).collect();
+        format!("{truncated}…")
+    }
 }
 
 /// Get ahead/behind counts relative to upstream tracking branch.
@@ -300,6 +328,116 @@ mod tests {
         assert_eq!(
             normalize_remote_url("https://example.com/repo"),
             "https://example.com/repo"
+        );
+    }
+
+    // --- last commit message tests ---
+
+    #[test]
+    fn test_last_commit_message_from_initial_commit() {
+        let (_dir, repo) = setup_temp_repo();
+        let msg = get_last_commit_message(&repo);
+        assert_eq!(msg, Some("Initial commit".to_string()));
+    }
+
+    #[test]
+    fn test_last_commit_message_custom() {
+        let (dir, _repo) = setup_temp_repo();
+        // Make a second commit with a custom message
+        std::fs::write(dir.path().join("file.txt"), "content").expect("write failed");
+        Command::new("git")
+            .args(["add", "file.txt"])
+            .current_dir(dir.path())
+            .status()
+            .expect("git add failed");
+        Command::new("git")
+            .args(["commit", "-m", "feat: add awesome feature"])
+            .current_dir(dir.path())
+            .status()
+            .expect("git commit failed");
+
+        let repo = Repository::open(dir.path()).expect("reopen");
+        let msg = get_last_commit_message(&repo);
+        assert_eq!(msg, Some("feat: add awesome feature".to_string()));
+    }
+
+    #[test]
+    fn test_last_commit_message_multiline_takes_first_line() {
+        let (dir, _repo) = setup_temp_repo();
+        std::fs::write(dir.path().join("file.txt"), "data").expect("write failed");
+        Command::new("git")
+            .args(["add", "file.txt"])
+            .current_dir(dir.path())
+            .status()
+            .expect("git add failed");
+        Command::new("git")
+            .args(["commit", "-m", "Subject line\n\nBody paragraph here."])
+            .current_dir(dir.path())
+            .status()
+            .expect("git commit failed");
+
+        let repo = Repository::open(dir.path()).expect("reopen");
+        let msg = get_last_commit_message(&repo);
+        assert_eq!(msg, Some("Subject line".to_string()));
+    }
+
+    #[test]
+    fn test_last_commit_message_empty_repo() {
+        let dir = TempDir::new().expect("tmpdir");
+        let repo = Repository::init(dir.path()).expect("init");
+        // No commits — should return None
+        let msg = get_last_commit_message(&repo);
+        assert_eq!(msg, None);
+    }
+
+    // --- truncate_message tests ---
+
+    #[test]
+    fn test_truncate_short_message() {
+        assert_eq!(truncate_message("hello", 50), "hello");
+    }
+
+    #[test]
+    fn test_truncate_exact_length() {
+        let msg = "a".repeat(50);
+        assert_eq!(truncate_message(&msg, 50), msg);
+    }
+
+    #[test]
+    fn test_truncate_long_message() {
+        let msg = "a".repeat(60);
+        let result = truncate_message(&msg, 50);
+        assert_eq!(result.chars().count(), 50);
+        assert!(result.ends_with('…'));
+        assert_eq!(&result[..49], &"a".repeat(49));
+    }
+
+    #[test]
+    fn test_truncate_unicode() {
+        // Each emoji is one char
+        let msg = "🎉".repeat(55);
+        let result = truncate_message(&msg, 50);
+        assert_eq!(result.chars().count(), 50);
+        assert!(result.ends_with('…'));
+    }
+
+    #[test]
+    fn test_truncate_empty_string() {
+        assert_eq!(truncate_message("", 50), "");
+    }
+
+    #[test]
+    fn test_truncate_max_len_1() {
+        assert_eq!(truncate_message("hello", 1), "…");
+    }
+
+    #[test]
+    fn test_project_status_includes_message() {
+        let (dir, _repo) = setup_temp_repo();
+        let status = get_project_status(dir.path()).unwrap();
+        assert_eq!(
+            status.last_commit_message,
+            Some("Initial commit".to_string())
         );
     }
 }

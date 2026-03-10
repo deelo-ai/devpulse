@@ -107,6 +107,7 @@ mod tests {
             behind: 0,
             remote_url: None,
             stash_count: 0,
+            last_commit_message: None,
         }
     }
 
