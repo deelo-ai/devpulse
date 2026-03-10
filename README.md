@@ -21,30 +21,22 @@ brew install deelo-ai/tap/devpulse
 ### From crates.io
 
 ```bash
-cargo install devpulse
+cargo install dev-pulse
 ```
 
 ### Pre-built binaries
 
-Download the latest binary for your platform from [GitHub Releases](https://github.com/deelo-ai/devpulse/releases).
+Pre-built binaries will be available from [GitHub Releases](https://github.com/deelo-ai/devpulse/releases) once v0.1.0 is tagged.
+
+For now, build from source:
 
 ```bash
-# macOS (Apple Silicon)
-curl -L https://github.com/deelo-ai/devpulse/releases/latest/download/devpulse-aarch64-apple-darwin.tar.gz | tar xz
-sudo mv devpulse /usr/local/bin/
-
-# macOS (Intel)
-curl -L https://github.com/deelo-ai/devpulse/releases/latest/download/devpulse-x86_64-apple-darwin.tar.gz | tar xz
-sudo mv devpulse /usr/local/bin/
-
-# Linux (x86_64)
-curl -L https://github.com/deelo-ai/devpulse/releases/latest/download/devpulse-x86_64-unknown-linux-gnu.tar.gz | tar xz
-sudo mv devpulse /usr/local/bin/
-
-# Linux (aarch64)
-curl -L https://github.com/deelo-ai/devpulse/releases/latest/download/devpulse-aarch64-unknown-linux-gnu.tar.gz | tar xz
-sudo mv devpulse /usr/local/bin/
+git clone https://github.com/deelo-ai/devpulse.git
+cd devpulse
+cargo build --release
+# Binary at target/release/devpulse
 ```
+
 
 ## Quick Start
 

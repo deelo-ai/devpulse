@@ -1,5 +1,5 @@
 [package]
-name = "devpulse"
+name = "dev-pulse"
 version = "0.1.0"
 edition = "2024"
 description = "Project health dashboard for your terminal"
@@ -16,7 +16,6 @@ clap = { version = "4", features = ["derive"] }
 git2 = "0.20"
 ratatui = "0.29"
 crossterm = "0.28"
-tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["json", "blocking"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -30,3 +29,7 @@ clap_complete = "4.5.66"
 
 [dev-dependencies]
 tempfile = "3"
+
+[[bin]]
+name = "devpulse"
+path = "src/main.rs"

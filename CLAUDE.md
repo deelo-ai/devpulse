@@ -6,9 +6,9 @@
 
 - **Git status** — clean, dirty, ahead/behind remote, stale branches
 - **Last activity** — time since last commit (color-coded: green < 1 week, yellow < 1 month, red > 1 month)
-- **CI status** — GitHub Actions pass/fail (if it's a GitHub repo)
-- **Dependency freshness** — outdated deps count (Cargo.toml, package.json, pyproject.toml, go.mod)
-- **Repo size** — lines of code, number of files
+- **Export formats** — JSON, CSV, Markdown output
+- **Interactive TUI** — keyboard navigation, open repos in browser
+- **Watch mode** — continuous monitoring with configurable refresh
 
 ## Architecture
 
@@ -21,8 +21,6 @@ src/
 ├── main.rs          # CLI entry point (clap)
 ├── scanner.rs       # Walks directory, discovers projects
 ├── git.rs           # Git status checks (uses git2 crate)
-├── ci.rs            # GitHub Actions status (gh CLI or GitHub API)
-├── deps.rs          # Dependency freshness checking
 ├── tui.rs           # Terminal UI (ratatui)
 └── types.rs         # Shared types
 ```
@@ -77,7 +75,6 @@ That's it. No CI, no deps, no TUI interactions yet. Ship the simplest useful thi
 
 - Interactive TUI with keyboard navigation
 - CI status from GitHub Actions
-- Dependency freshness checking
 - Watch mode (auto-refresh)
 - Config file for custom project paths
 - Export to JSON/markdown
