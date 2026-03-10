@@ -213,7 +213,8 @@ sort = "status"
     fn test_expand_tilde_bare() {
         let expanded = expand_tilde("~");
         assert!(!expanded.to_string_lossy().starts_with('~'));
-        assert!(expanded.exists() || true); // home dir should exist, but don't fail in CI
+        // Home dir should exist, but don't hard-fail in CI
+        let _ = expanded.exists();
     }
 
     #[test]

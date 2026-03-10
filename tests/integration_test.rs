@@ -649,3 +649,277 @@ fn test_last_commit_message_in_json() {
         .expect("should have last_commit_message");
     assert_eq!(msg, "initial commit");
 }
+
+#[test]
+fn test_depth_two_nested_repos() {
+    let tmp = TempDir::new().unwrap();
+    // Create nested structure: parent/child/repo
+    let nested = tmp.path().join("level1").join("level2-repo");
+    fs::create_dir_all(&nested).unwrap();
+    init_repo(&nested);
+
+    // depth=1 should NOT find it
+    let (stdout, _stderr, success) = run_devpulse(&[
+        "--depth", "1", "--no-color", tmp.path().to_str().unwrap(),
+    ]);
+    assert!(success);
+    assert!(
+        !stdout.contains("level2-repo"),
+        "depth 1 should not find nested repo"
+    );
+
+    // depth=2 SHOULD find it
+    let (stdout2, _stderr2, success2) = run_devpulse(&[
+        "--depth", "2", "--no-color", tmp.path().to_str().unwrap(),
+    ]);
+    assert!(success2);
+    assert!(
+        stdout2.contains("level2-repo"),
+        "depth 2 should find nested repo"
+    );
+}
+
+#[test]
+fn test_filter_stale() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("stalerepo");
+    fs::create_dir_all(&repo).unwrap();
+    run_git(&repo, &["init"]);
+    run_git(&repo, &["config", "user.email", "test@test.com"]);
+    run_git(&repo, &["config", "user.name", "Test"]);
+    // Create a commit dated 60 days ago using ISO format
+    let old_date = chrono::Utc::now() - chrono::Duration::days(60);
+    let date_str = old_date.format("%Y-%m-%dT%H:%M:%S").to_string();
+    let output = Command::new("git")
+        .args(["commit", "--allow-empty", "-m", "old commit", "--date", &date_str])
+        .current_dir(&repo)
+        .env("GIT_COMMITTER_DATE", &date_str)
+        .output()
+        .expect("failed to create old commit");
+    assert!(output.status.success(), "old commit should succeed: {}", String::from_utf8_lossy(&output.stderr));
+
+    let (stdout, _stderr, success) = run_devpulse(&[
+        "--filter", "stale", "--no-color", tmp.path().to_str().unwrap(),
+    ]);
+    assert!(success);
+    assert!(
+        stdout.contains("stalerepo"),
+        "project with 60-day old commit should be stale"
+    );
+}
+
+#[test]
+fn test_filter_unpushed() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("unpushed-repo");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+    // No remote set up, so commits are "unpushed" — behavior depends on implementation
+    // At minimum, the filter should not crash
+    let (_stdout, _stderr, success) = run_devpulse(&[
+        "--filter", "unpushed", "--no-color", tmp.path().to_str().unwrap(),
+    ]);
+    assert!(success, "unpushed filter should not crash");
+}
+
+#[test]
+fn test_include_empty_with_since() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("empty-history");
+    fs::create_dir_all(&repo).unwrap();
+    // Init repo but with no commits — just git init
+    run_git(&repo, &["init"]);
+
+    // Without --include-empty, empty repos should be excluded
+    let (stdout1, _stderr1, success1) = run_devpulse(&[
+        "--since", "7d", "--no-color", tmp.path().to_str().unwrap(),
+    ]);
+    assert!(success1);
+    assert!(
+        !stdout1.contains("empty-history"),
+        "empty repo should be excluded without --include-empty"
+    );
+
+    // With --include-empty, it should show up
+    let (stdout2, _stderr2, success2) = run_devpulse(&[
+        "--since", "7d", "--include-empty", "--no-color", tmp.path().to_str().unwrap(),
+    ]);
+    assert!(success2);
+    assert!(
+        stdout2.contains("empty-history"),
+        "empty repo should appear with --include-empty"
+    );
+}
+
+#[test]
+fn test_config_file() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("configtest");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    // Write a .devpulse.toml that sets color = false and sort = "name"
+    let config_content = r#"
+sort = "name"
+color = false
+"#;
+    fs::write(tmp.path().join(".devpulse.toml"), config_content).unwrap();
+
+    // Run without --no-color flag — config should disable color
+    let output = Command::new(devpulse_bin())
+        .args([tmp.path().to_str().unwrap()])
+        .env_remove("NO_COLOR")
+        .output()
+        .expect("failed to run devpulse");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success());
+    assert!(
+        !stdout.contains("\x1b["),
+        "config color=false should suppress ANSI codes"
+    );
+}
+
+#[test]
+fn test_format_table_explicit() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("tabletest");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    let (stdout, _stderr, success) = run_devpulse(&[
+        "--format", "table", "--no-color", tmp.path().to_str().unwrap(),
+    ]);
+    assert!(success);
+    assert!(stdout.contains("tabletest"), "table format should show project name");
+    // Table output should NOT be JSON or CSV
+    assert!(
+        serde_json::from_str::<serde_json::Value>(&stdout).is_err(),
+        "table output should not be valid JSON"
+    );
+}
+
+#[test]
+fn test_group_json_output() {
+    let tmp = TempDir::new().unwrap();
+    let grp = tmp.path().join("mygroup");
+    let repo = grp.join("grouped-proj");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    let (stdout, _stderr, success) = run_devpulse(&[
+        "--group", "--json", "--depth", "2", tmp.path().to_str().unwrap(),
+    ]);
+    assert!(success);
+
+    let json_str: String = stdout
+        .lines()
+        .filter(|l| !l.starts_with("Scanning"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let parsed: serde_json::Value =
+        serde_json::from_str(json_str.trim()).expect("grouped JSON should be valid");
+    // With --group, JSON uses "groups" key instead of "projects"
+    assert!(
+        parsed["groups"].is_object(),
+        "grouped JSON should have groups object, got: {json_str}"
+    );
+    assert!(
+        parsed["summary"].is_object(),
+        "grouped JSON should have summary"
+    );
+}
+
+#[test]
+fn test_staged_changes_detected() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("stagedtest");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    // Stage a file without committing
+    fs::write(repo.join("staged.txt"), "staged content").unwrap();
+    run_git(&repo, &["add", "staged.txt"]);
+
+    let (stdout, _stderr, success) = run_devpulse(&["--json", tmp.path().to_str().unwrap()]);
+    assert!(success);
+
+    let json_str: String = stdout
+        .lines()
+        .filter(|l| !l.starts_with("Scanning"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let parsed: serde_json::Value =
+        serde_json::from_str(json_str.trim()).expect("should be valid JSON");
+    assert_eq!(
+        parsed["projects"][0]["is_clean"], false,
+        "staged but uncommitted changes should be dirty"
+    );
+}
+
+#[test]
+fn test_multiple_repos_sorted_by_activity() {
+    let tmp = TempDir::new().unwrap();
+
+    // Create two repos with different commit times
+    let old_repo = tmp.path().join("old-repo");
+    let new_repo = tmp.path().join("new-repo");
+    fs::create_dir_all(&old_repo).unwrap();
+    fs::create_dir_all(&new_repo).unwrap();
+
+    // Old repo: commit dated 10 days ago
+    run_git(&old_repo, &["init"]);
+    run_git(&old_repo, &["config", "user.email", "test@test.com"]);
+    run_git(&old_repo, &["config", "user.name", "Test"]);
+    let old_date = chrono::Utc::now() - chrono::Duration::days(10);
+    let date_str = old_date.format("%Y-%m-%dT%H:%M:%S").to_string();
+    let output = Command::new("git")
+        .args(["commit", "--allow-empty", "-m", "old", "--date", &date_str])
+        .current_dir(&old_repo)
+        .env("GIT_COMMITTER_DATE", &date_str)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "old commit should succeed");
+
+    // New repo: commit now
+    init_repo(&new_repo);
+
+    let (stdout, _stderr, success) = run_devpulse(&[
+        "--sort", "activity", "--no-color", tmp.path().to_str().unwrap(),
+    ]);
+    assert!(success);
+
+    // Activity sort = most stale first, so old-repo should appear before new-repo
+    let old_pos = stdout.find("old-repo").expect("should find old-repo");
+    let new_pos = stdout.find("new-repo").expect("should find new-repo");
+    assert!(
+        old_pos < new_pos,
+        "activity sort should put stale (old) repos first"
+    );
+}
+
+#[test]
+fn test_json_format_flag_equivalent_to_json_flag() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("fmtjson");
+    fs::create_dir_all(&repo).unwrap();
+    init_repo(&repo);
+
+    let (stdout1, _, _) = run_devpulse(&["--json", tmp.path().to_str().unwrap()]);
+    let (stdout2, _, _) = run_devpulse(&["--format", "json", tmp.path().to_str().unwrap()]);
+
+    // Both should produce valid JSON with same structure
+    let filter_scanning = |s: &str| -> String {
+        s.lines()
+            .filter(|l| !l.starts_with("Scanning"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let j1: serde_json::Value = serde_json::from_str(filter_scanning(&stdout1).trim()).unwrap();
+    let j2: serde_json::Value = serde_json::from_str(filter_scanning(&stdout2).trim()).unwrap();
+    assert_eq!(
+        j1["projects"].as_array().unwrap().len(),
+        j2["projects"].as_array().unwrap().len(),
+        "--json and --format json should produce same number of projects"
+    );
+}
