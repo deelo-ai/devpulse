@@ -3,9 +3,11 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use chrono::{TimeZone, Utc};
 use crossterm::ExecutableCommand;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
+use git2::Repository;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -18,6 +20,24 @@ use crate::theme::Theme;
 use crate::types::ProjectStatus;
 use crate::{git, scanner};
 
+/// Which view is shown in the detail panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DetailMode {
+    Summary,
+    GitLog,
+}
+
+/// A single commit entry for the git log view.
+#[derive(Debug, Clone)]
+pub struct LogEntry {
+    pub short_hash: String,
+    pub message: String,
+    pub relative_time: String,
+    pub is_merge: bool,
+    /// Seconds since epoch, used for "recent" styling.
+    pub commit_epoch: i64,
+}
+
 /// Application state for the TUI.
 pub struct App {
     statuses: Vec<ProjectStatus>,
@@ -27,6 +47,11 @@ pub struct App {
     search_mode: bool,
     search_query: String,
     filtered_indices: Vec<usize>,
+    detail_mode: DetailMode,
+    log_entries: Vec<LogEntry>,
+    log_scroll: usize,
+    /// Track which project index the log was fetched for, to know when to re-fetch.
+    log_project_idx: Option<usize>,
 }
 
 impl App {
@@ -47,6 +72,10 @@ impl App {
             search_mode: false,
             search_query: String::new(),
             filtered_indices,
+            detail_mode: DetailMode::Summary,
+            log_entries: Vec::new(),
+            log_scroll: 0,
+            log_project_idx: None,
         }
     }
 
@@ -140,6 +169,124 @@ impl App {
         }
         Ok(())
     }
+
+    /// Toggle the detail panel to git log mode, or back to summary.
+    pub fn toggle_git_log(&mut self) {
+        match self.detail_mode {
+            DetailMode::Summary => {
+                self.detail_mode = DetailMode::GitLog;
+                self.log_scroll = 0;
+                self.refresh_log_if_needed();
+            }
+            DetailMode::GitLog => {
+                self.detail_mode = DetailMode::Summary;
+            }
+        }
+    }
+
+    /// Fetch the git log for the currently selected project (if changed).
+    pub fn refresh_log_if_needed(&mut self) {
+        let current_idx = self
+            .list_state
+            .selected()
+            .and_then(|i| self.filtered_indices.get(i).copied());
+
+        if current_idx == self.log_project_idx && !self.log_entries.is_empty() {
+            return; // already have log for this project
+        }
+
+        self.log_project_idx = current_idx;
+        self.log_entries.clear();
+        self.log_scroll = 0;
+
+        if let Some(project) = self.selected_project() {
+            self.log_entries = fetch_git_log(&project.path);
+        }
+    }
+
+    /// Scroll the git log down by one line.
+    pub fn scroll_log_down(&mut self) {
+        if !self.log_entries.is_empty() {
+            self.log_scroll = (self.log_scroll + 1).min(self.log_entries.len().saturating_sub(1));
+        }
+    }
+
+    /// Scroll the git log up by one line.
+    pub fn scroll_log_up(&mut self) {
+        self.log_scroll = self.log_scroll.saturating_sub(1);
+    }
+}
+
+/// Fetch the last 50 commits from a git repository using git2.
+fn fetch_git_log(path: &Path) -> Vec<LogEntry> {
+    let repo = match Repository::open(path) {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+
+    let head = match repo.head() {
+        Ok(h) => h,
+        Err(_) => return Vec::new(), // empty repo
+    };
+
+    let head_oid = match head.target() {
+        Some(oid) => oid,
+        None => return Vec::new(),
+    };
+
+    let mut revwalk = match repo.revwalk() {
+        Ok(rw) => rw,
+        Err(_) => return Vec::new(),
+    };
+
+    if revwalk.push(head_oid).is_err() {
+        return Vec::new();
+    }
+
+    let mut entries = Vec::new();
+
+    for oid_result in revwalk {
+        if entries.len() >= 50 {
+            break;
+        }
+        let oid = match oid_result {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
+        let commit = match repo.find_commit(oid) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let short_hash = format!("{}", oid).chars().take(7).collect::<String>();
+
+        let message = commit
+            .message()
+            .unwrap_or("")
+            .lines()
+            .next()
+            .unwrap_or("")
+            .to_string();
+
+        let commit_epoch = commit.time().seconds();
+        let dt = Utc
+            .timestamp_opt(commit_epoch, 0)
+            .single()
+            .unwrap_or_else(Utc::now);
+        let relative_time = format_relative_time(dt);
+
+        let is_merge = message.starts_with("Merge");
+
+        entries.push(LogEntry {
+            short_hash,
+            message,
+            relative_time,
+            is_merge,
+            commit_epoch,
+        });
+    }
+
+    entries
 }
 
 /// Open a URL in the default browser.
@@ -309,6 +456,14 @@ fn render_project_list(frame: &mut ratatui::Frame, app: &mut App, area: Rect, th
 
 /// Render the right pane: detail panel for the selected project.
 fn render_detail_panel(frame: &mut ratatui::Frame, app: &App, area: Rect, theme: &Theme) {
+    match app.detail_mode {
+        DetailMode::Summary => render_summary_panel(frame, app, area, theme),
+        DetailMode::GitLog => render_git_log_panel(frame, app, area, theme),
+    }
+}
+
+/// Render the summary view in the detail panel.
+fn render_summary_panel(frame: &mut ratatui::Frame, app: &App, area: Rect, theme: &Theme) {
     let block = Block::default().borders(Borders::ALL).title(" Details ");
 
     let Some(project) = app.selected_project() else {
@@ -431,6 +586,75 @@ fn render_detail_panel(frame: &mut ratatui::Frame, app: &App, area: Rect, theme:
     frame.render_widget(detail, area);
 }
 
+/// Render the git log view in the detail panel.
+fn render_git_log_panel(frame: &mut ratatui::Frame, app: &App, area: Rect, theme: &Theme) {
+    let project_name = app
+        .selected_project()
+        .map(|p| p.name.as_str())
+        .unwrap_or("—");
+    let title = format!(" git log — {} ", project_name);
+    let block = Block::default().borders(Borders::ALL).title(title);
+
+    if app.log_entries.is_empty() {
+        let empty = Paragraph::new("no commits found")
+            .style(Style::default().fg(theme.dim.to_ratatui()))
+            .block(block);
+        frame.render_widget(empty, area);
+        return;
+    }
+
+    // Available height inside the block (subtract 2 for top/bottom borders, 1 for status line)
+    let inner_height = area.height.saturating_sub(4) as usize;
+    let total = app.log_entries.len();
+    let start = app.log_scroll;
+    let end = (start + inner_height).min(total);
+    let now_epoch = Utc::now().timestamp();
+
+    let mut lines: Vec<Line> = Vec::new();
+    for entry in &app.log_entries[start..end] {
+        let is_recent = (now_epoch - entry.commit_epoch) < 86400; // < 1 day
+
+        let hash_style = Style::default().fg(theme.accent.to_ratatui());
+        let time_style = if is_recent {
+            Style::default()
+                .fg(theme.clean.to_ratatui())
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.dim.to_ratatui())
+        };
+        let msg_style = if entry.is_merge {
+            Style::default().fg(theme.dim.to_ratatui())
+        } else {
+            Style::default().fg(theme.header.to_ratatui())
+        };
+
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(&entry.short_hash, hash_style),
+            Span::raw("  "),
+            Span::styled(format!("{:>8}", entry.relative_time), time_style),
+            Span::raw("  "),
+            Span::styled(&entry.message, msg_style),
+        ]));
+    }
+
+    // Status line at the bottom
+    lines.push(Line::from(""));
+    let status = format!(
+        "  showing {}-{} of {} commits",
+        if total == 0 { 0 } else { start + 1 },
+        end,
+        total
+    );
+    lines.push(Line::from(Span::styled(
+        status,
+        Style::default().fg(theme.dim.to_ratatui()),
+    )));
+
+    let detail = Paragraph::new(lines).block(block);
+    frame.render_widget(detail, area);
+}
+
 /// Render the footer with key hints or search bar.
 fn render_footer(frame: &mut ratatui::Frame, app: &App, area: Rect, theme: &Theme) {
     let content = if app.search_mode {
@@ -467,6 +691,13 @@ fn render_footer(frame: &mut ratatui::Frame, app: &App, area: Rect, theme: &Them
                     .add_modifier(Modifier::BOLD),
             ),
             Span::raw("Open URL  "),
+            Span::styled(
+                " l ",
+                Style::default()
+                    .fg(theme.accent.to_ratatui())
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("Log  "),
             Span::styled(
                 " q ",
                 Style::default()
@@ -511,6 +742,19 @@ fn handle_event(app: &mut App) -> Result<bool> {
                 }
                 _ => {}
             }
+        } else if app.detail_mode == DetailMode::GitLog {
+            match key.code {
+                KeyCode::Char('q') => {
+                    app.should_quit = true;
+                    return Ok(false);
+                }
+                KeyCode::Char('l') | KeyCode::Esc => {
+                    app.detail_mode = DetailMode::Summary;
+                }
+                KeyCode::Down | KeyCode::Char('j') => app.scroll_log_down(),
+                KeyCode::Up | KeyCode::Char('k') => app.scroll_log_up(),
+                _ => {}
+            }
         } else {
             match key.code {
                 KeyCode::Char('q') | KeyCode::Esc => {
@@ -519,6 +763,9 @@ fn handle_event(app: &mut App) -> Result<bool> {
                 }
                 KeyCode::Char('/') => {
                     app.enter_search_mode();
+                }
+                KeyCode::Char('l') => {
+                    app.toggle_git_log();
                 }
                 KeyCode::Down | KeyCode::Char('j') => app.next(),
                 KeyCode::Up | KeyCode::Char('k') => app.previous(),
@@ -871,5 +1118,252 @@ mod tests {
         assert!(app.filtered_indices.is_empty());
         assert!(app.selected_project().is_none());
         assert!(app.list_state.selected().is_none());
+    }
+
+    // --- DetailMode and git log tests ---
+
+    #[test]
+    fn test_default_detail_mode_is_summary() {
+        let app = App::new(vec![make_status("a", true, None)]);
+        assert_eq!(app.detail_mode, DetailMode::Summary);
+    }
+
+    #[test]
+    fn test_toggle_git_log_switches_mode() {
+        let mut app = App::new(vec![make_status("a", true, None)]);
+        assert_eq!(app.detail_mode, DetailMode::Summary);
+
+        app.toggle_git_log();
+        assert_eq!(app.detail_mode, DetailMode::GitLog);
+
+        app.toggle_git_log();
+        assert_eq!(app.detail_mode, DetailMode::Summary);
+    }
+
+    #[test]
+    fn test_toggle_git_log_resets_scroll() {
+        let mut app = App::new(vec![make_status("a", true, None)]);
+        app.toggle_git_log();
+        app.log_scroll = 5;
+
+        // Toggle back and forth should reset scroll
+        app.toggle_git_log(); // back to summary
+        app.toggle_git_log(); // back to git log
+        assert_eq!(app.log_scroll, 0);
+    }
+
+    #[test]
+    fn test_scroll_log_down_clamps() {
+        let mut app = App::new(vec![make_status("a", true, None)]);
+        app.log_entries = vec![
+            LogEntry {
+                short_hash: "abc1234".to_string(),
+                message: "first".to_string(),
+                relative_time: "1h ago".to_string(),
+                is_merge: false,
+                commit_epoch: 0,
+            },
+            LogEntry {
+                short_hash: "def5678".to_string(),
+                message: "second".to_string(),
+                relative_time: "2h ago".to_string(),
+                is_merge: false,
+                commit_epoch: 0,
+            },
+        ];
+
+        app.scroll_log_down();
+        assert_eq!(app.log_scroll, 1);
+
+        // Should clamp at last entry
+        app.scroll_log_down();
+        assert_eq!(app.log_scroll, 1);
+
+        app.scroll_log_down();
+        assert_eq!(app.log_scroll, 1);
+    }
+
+    #[test]
+    fn test_scroll_log_up_clamps_at_zero() {
+        let mut app = App::new(vec![make_status("a", true, None)]);
+        app.log_entries = vec![LogEntry {
+            short_hash: "abc1234".to_string(),
+            message: "first".to_string(),
+            relative_time: "1h ago".to_string(),
+            is_merge: false,
+            commit_epoch: 0,
+        }];
+
+        app.scroll_log_up();
+        assert_eq!(app.log_scroll, 0);
+
+        app.log_scroll = 3;
+        app.scroll_log_up();
+        assert_eq!(app.log_scroll, 2);
+    }
+
+    #[test]
+    fn test_scroll_log_empty_entries() {
+        let mut app = App::new(vec![make_status("a", true, None)]);
+        // No log entries
+        app.scroll_log_down();
+        assert_eq!(app.log_scroll, 0);
+
+        app.scroll_log_up();
+        assert_eq!(app.log_scroll, 0);
+    }
+
+    #[test]
+    fn test_log_entry_is_merge() {
+        let merge_entry = LogEntry {
+            short_hash: "abc1234".to_string(),
+            message: "Merge branch 'feature'".to_string(),
+            relative_time: "1h ago".to_string(),
+            is_merge: true,
+            commit_epoch: 0,
+        };
+        assert!(merge_entry.is_merge);
+
+        let normal_entry = LogEntry {
+            short_hash: "def5678".to_string(),
+            message: "feat: add feature".to_string(),
+            relative_time: "2h ago".to_string(),
+            is_merge: false,
+            commit_epoch: 0,
+        };
+        assert!(!normal_entry.is_merge);
+    }
+
+    #[test]
+    fn test_fetch_git_log_with_real_repo() {
+        use std::process::Command;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().expect("tmpdir");
+        let repo = git2::Repository::init(dir.path()).expect("init");
+
+        let mut config = repo.config().expect("config");
+        config.set_str("user.name", "Test User").expect("set name");
+        config
+            .set_str("user.email", "test@example.com")
+            .expect("set email");
+
+        // Create 3 commits
+        for i in 0..3 {
+            let filename = format!("file{}.txt", i);
+            std::fs::write(dir.path().join(&filename), format!("content {}", i))
+                .expect("write file");
+            Command::new("git")
+                .args(["add", &filename])
+                .current_dir(dir.path())
+                .status()
+                .expect("git add");
+            Command::new("git")
+                .args(["commit", "-m", &format!("commit {}", i)])
+                .current_dir(dir.path())
+                .status()
+                .expect("git commit");
+        }
+
+        let entries = fetch_git_log(dir.path());
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].message, "commit 2"); // most recent first
+        assert_eq!(entries[1].message, "commit 1");
+        assert_eq!(entries[2].message, "commit 0");
+        assert!(!entries[0].is_merge);
+        assert_eq!(entries[0].short_hash.len(), 7);
+    }
+
+    #[test]
+    fn test_fetch_git_log_empty_repo() {
+        let dir = tempfile::TempDir::new().expect("tmpdir");
+        git2::Repository::init(dir.path()).expect("init");
+
+        let entries = fetch_git_log(dir.path());
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_fetch_git_log_not_a_repo() {
+        let dir = tempfile::TempDir::new().expect("tmpdir");
+        let entries = fetch_git_log(dir.path());
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_fetch_git_log_merge_commit() {
+        use std::process::Command;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().expect("tmpdir");
+        Command::new("git")
+            .args(["init", "-b", "main"])
+            .current_dir(dir.path())
+            .status()
+            .expect("git init");
+        Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(dir.path())
+            .status()
+            .expect("config");
+        Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(dir.path())
+            .status()
+            .expect("config");
+
+        // Initial commit
+        std::fs::write(dir.path().join("a.txt"), "a").expect("write");
+        Command::new("git")
+            .args(["add", "a.txt"])
+            .current_dir(dir.path())
+            .status()
+            .expect("add");
+        Command::new("git")
+            .args(["commit", "-m", "initial"])
+            .current_dir(dir.path())
+            .status()
+            .expect("commit");
+
+        // Create a branch and commit
+        Command::new("git")
+            .args(["checkout", "-b", "feature"])
+            .current_dir(dir.path())
+            .status()
+            .expect("checkout");
+        std::fs::write(dir.path().join("b.txt"), "b").expect("write");
+        Command::new("git")
+            .args(["add", "b.txt"])
+            .current_dir(dir.path())
+            .status()
+            .expect("add");
+        Command::new("git")
+            .args(["commit", "-m", "feature work"])
+            .current_dir(dir.path())
+            .status()
+            .expect("commit");
+
+        // Go back to main and merge
+        Command::new("git")
+            .args(["checkout", "main"])
+            .current_dir(dir.path())
+            .status()
+            .expect("checkout");
+        Command::new("git")
+            .args([
+                "merge",
+                "--no-ff",
+                "feature",
+                "-m",
+                "Merge branch 'feature'",
+            ])
+            .current_dir(dir.path())
+            .status()
+            .expect("merge");
+
+        let entries = fetch_git_log(dir.path());
+        assert!(entries.len() >= 2);
+        assert!(entries[0].is_merge);
+        assert!(entries[0].message.starts_with("Merge"));
     }
 }
