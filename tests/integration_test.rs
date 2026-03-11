@@ -39,7 +39,7 @@ fn run_devpulse(args: &[&str]) -> (String, String, bool) {
 
 /// Create a git repo with an initial commit in `dir`.
 fn init_repo(dir: &Path) {
-    run_git(dir, &["init"]);
+    run_git(dir, &["init", "-b", "main"]);
     run_git(dir, &["config", "user.email", "test@test.com"]);
     run_git(dir, &["config", "user.name", "Test"]);
     run_git(dir, &["commit", "--allow-empty", "-m", "initial commit"]);
@@ -691,7 +691,7 @@ fn test_filter_stale() {
     let tmp = TempDir::new().unwrap();
     let repo = tmp.path().join("stalerepo");
     fs::create_dir_all(&repo).unwrap();
-    run_git(&repo, &["init"]);
+    run_git(&repo, &["init", "-b", "main"]);
     run_git(&repo, &["config", "user.email", "test@test.com"]);
     run_git(&repo, &["config", "user.name", "Test"]);
     // Create a commit dated 60 days ago using ISO format
@@ -752,7 +752,7 @@ fn test_include_empty_with_since() {
     let repo = tmp.path().join("empty-history");
     fs::create_dir_all(&repo).unwrap();
     // Init repo but with no commits — just git init
-    run_git(&repo, &["init"]);
+    run_git(&repo, &["init", "-b", "main"]);
 
     // Without --include-empty, empty repos should be excluded
     let (stdout1, _stderr1, success1) =
@@ -905,7 +905,7 @@ fn test_multiple_repos_sorted_by_activity() {
     fs::create_dir_all(&new_repo).unwrap();
 
     // Old repo: commit dated 10 days ago
-    run_git(&old_repo, &["init"]);
+    run_git(&old_repo, &["init", "-b", "main"]);
     run_git(&old_repo, &["config", "user.email", "test@test.com"]);
     run_git(&old_repo, &["config", "user.name", "Test"]);
     let old_date = chrono::Utc::now() - chrono::Duration::days(10);
@@ -1039,7 +1039,7 @@ fn test_repo_with_no_commits() {
     let repo = tmp.path().join("no-commits");
     fs::create_dir_all(&repo).unwrap();
     // Init without committing
-    run_git(&repo, &["init"]);
+    run_git(&repo, &["init", "-b", "main"]);
     run_git(&repo, &["config", "user.email", "test@test.com"]);
     run_git(&repo, &["config", "user.name", "Test"]);
 
