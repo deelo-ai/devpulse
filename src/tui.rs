@@ -8,11 +8,12 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, TableState};
 
+use crate::ci::CiStatus;
 use crate::theme::Theme;
 use crate::types::ProjectStatus;
 use crate::{git, scanner};
@@ -21,6 +22,7 @@ use crate::{git, scanner};
 pub struct App {
     statuses: Vec<ProjectStatus>,
     table_state: TableState,
+    list_state: ListState,
     should_quit: bool,
 }
 
@@ -28,12 +30,15 @@ impl App {
     /// Create a new App by scanning the given directory.
     pub fn new(statuses: Vec<ProjectStatus>) -> Self {
         let mut table_state = TableState::default();
+        let mut list_state = ListState::default();
         if !statuses.is_empty() {
             table_state.select(Some(0));
+            list_state.select(Some(0));
         }
         Self {
             statuses,
             table_state,
+            list_state,
             should_quit: false,
         }
     }
@@ -54,6 +59,7 @@ impl App {
             None => 0,
         };
         self.table_state.select(Some(i));
+        self.list_state.select(Some(i));
     }
 
     /// Move selection down.
@@ -72,6 +78,7 @@ impl App {
             None => 0,
         };
         self.table_state.select(Some(i));
+        self.list_state.select(Some(i));
     }
 
     /// Get the currently selected project status, if any.
@@ -153,103 +160,228 @@ fn format_relative_time(dt: chrono::DateTime<chrono::Utc>) -> String {
     }
 }
 
-/// Render the TUI frame.
+/// Render the TUI frame with split-pane layout.
 fn render(frame: &mut ratatui::Frame, app: &mut App, theme: &Theme) {
-    let chunks = Layout::vertical([Constraint::Min(5), Constraint::Length(3)]).split(frame.area());
+    // Vertical: header (1 line + borders = 3) | main area | footer (3)
+    let outer = Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Min(5),
+        Constraint::Length(3),
+    ])
+    .split(frame.area());
 
-    render_table(frame, app, chunks[0], theme);
-    render_footer(frame, app, chunks[1], theme);
+    render_header(frame, app, outer[0], theme);
+
+    // Horizontal split: left pane ~35%, right pane ~65%
+    let panes = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
+        .split(outer[1]);
+
+    render_project_list(frame, app, panes[0], theme);
+    render_detail_panel(frame, app, panes[1], theme);
+    render_footer(frame, outer[2], theme);
 }
 
-/// Render the project table.
-fn render_table(frame: &mut ratatui::Frame, app: &mut App, area: Rect, theme: &Theme) {
-    let header_cells = [
-        "Project",
-        "Branch",
-        "Status",
-        "Changed",
-        "Last Commit",
-        "↑/↓",
-        "Remote",
-    ]
-    .iter()
-    .map(|h| {
-        Cell::from(*h).style(
+/// Render the header bar with summary stats.
+fn render_header(frame: &mut ratatui::Frame, app: &App, area: Rect, theme: &Theme) {
+    let total = app.statuses.len();
+    let dirty = app.statuses.iter().filter(|s| !s.is_clean).count();
+    let stale = app.statuses.iter().filter(|s| is_stale(s)).count();
+
+    let header = Paragraph::new(Line::from(vec![
+        Span::styled(
+            "  devpulse",
             Style::default()
                 .fg(theme.accent.to_ratatui())
                 .add_modifier(Modifier::BOLD),
-        )
-    });
-    let header = Row::new(header_cells).height(1);
+        ),
+        Span::styled(
+            format!("  {} projects", total),
+            Style::default().fg(theme.header.to_ratatui()),
+        ),
+        Span::styled(
+            format!("  {} dirty", dirty),
+            Style::default().fg(theme.dirty.to_ratatui()),
+        ),
+        Span::styled(
+            format!("  {} stale", stale),
+            Style::default().fg(theme.stale.to_ratatui()),
+        ),
+    ]))
+    .block(Block::default().borders(Borders::ALL));
 
-    let rows = app.statuses.iter().map(|s| {
-        let status_style = if s.is_clean {
-            Style::default().fg(theme.clean.to_ratatui())
-        } else {
-            Style::default().fg(theme.dirty.to_ratatui())
-        };
+    frame.render_widget(header, area);
+}
 
-        let last_commit_str = match s.last_commit {
-            Some(dt) => format_relative_time(dt),
-            None => "no commits".to_string(),
-        };
+/// Check if a project is stale (last commit > 30 days ago).
+fn is_stale(status: &ProjectStatus) -> bool {
+    match status.last_commit {
+        Some(dt) => {
+            let days = (chrono::Utc::now() - dt).num_days();
+            days > 30
+        }
+        None => false,
+    }
+}
 
-        let ahead_behind = if s.ahead == 0 && s.behind == 0 {
-            "—".to_string()
-        } else {
-            format!("↑{} ↓{}", s.ahead, s.behind)
-        };
+/// Render the left pane: project list with status dots.
+fn render_project_list(frame: &mut ratatui::Frame, app: &mut App, area: Rect, theme: &Theme) {
+    let items: Vec<ListItem> = app
+        .statuses
+        .iter()
+        .map(|s| {
+            let dot_color = if s.is_clean {
+                theme.clean.to_ratatui()
+            } else {
+                theme.dirty.to_ratatui()
+            };
+            let line = Line::from(vec![
+                Span::styled("● ", Style::default().fg(dot_color)),
+                Span::raw(&s.name),
+            ]);
+            ListItem::new(line)
+        })
+        .collect();
 
-        let has_remote = if s.remote_url.is_some() { "✓" } else { "—" };
-
-        Row::new(vec![
-            Cell::from(s.name.clone()),
-            Cell::from(s.branch.clone()),
-            Cell::from(if s.is_clean { "clean" } else { "dirty" }).style(status_style),
-            Cell::from(format!("{}", s.changed_files)),
-            Cell::from(last_commit_str),
-            Cell::from(ahead_behind),
-            Cell::from(has_remote),
-        ])
-    });
-
-    let widths = [
-        Constraint::Min(15),
-        Constraint::Min(12),
-        Constraint::Length(8),
-        Constraint::Length(8),
-        Constraint::Length(12),
-        Constraint::Length(8),
-        Constraint::Length(6),
-    ];
-
-    let table = Table::new(rows, widths)
-        .header(header)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" devpulse — Project Health Dashboard "),
-        )
-        .row_highlight_style(
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::ALL).title(" Projects "))
+        .highlight_style(
             Style::default()
                 .bg(theme.highlight_bg.to_ratatui())
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("► ");
 
-    frame.render_stateful_widget(table, area, &mut app.table_state);
+    frame.render_stateful_widget(list, area, &mut app.list_state);
 }
 
-/// Render the footer with key hints and selected project info.
-fn render_footer(frame: &mut ratatui::Frame, app: &App, area: Rect, theme: &Theme) {
-    let selected_info = match app.selected_project() {
-        Some(p) => match &p.remote_url {
-            Some(url) => format!("  {}  │  {}", p.name, url),
-            None => format!("  {}  │  no remote", p.name),
-        },
-        None => String::new(),
+/// Render the right pane: detail panel for the selected project.
+fn render_detail_panel(frame: &mut ratatui::Frame, app: &App, area: Rect, theme: &Theme) {
+    let block = Block::default().borders(Borders::ALL).title(" Details ");
+
+    let Some(project) = app.selected_project() else {
+        let empty = Paragraph::new("No project selected")
+            .style(Style::default().fg(theme.dim.to_ratatui()))
+            .block(block);
+        frame.render_widget(empty, area);
+        return;
     };
 
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Project name as title
+    lines.push(Line::from(Span::styled(
+        &project.name,
+        Style::default()
+            .fg(theme.accent.to_ratatui())
+            .add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(Span::styled(
+        "──────────────────────────────────────",
+        Style::default().fg(theme.dim.to_ratatui()),
+    )));
+    lines.push(Line::from(""));
+
+    // Branch + upstream with ahead/behind
+    let ahead_behind = if project.ahead == 0 && project.behind == 0 {
+        String::new()
+    } else {
+        format!(" (↑{} ↓{})", project.ahead, project.behind)
+    };
+    let upstream = if project.remote_url.is_some() {
+        format!("origin/{}", project.branch)
+    } else {
+        "no remote".to_string()
+    };
+    lines.push(Line::from(vec![
+        Span::styled("Branch:    ", Style::default().fg(theme.dim.to_ratatui())),
+        Span::styled(
+            &project.branch,
+            Style::default().fg(theme.header.to_ratatui()),
+        ),
+        Span::styled(
+            format!(" → {upstream}{ahead_behind}"),
+            Style::default().fg(theme.dim.to_ratatui()),
+        ),
+    ]));
+
+    // Status with file count
+    let (status_text, status_color) = if project.is_clean {
+        ("clean".to_string(), theme.clean.to_ratatui())
+    } else {
+        (
+            format!("● {} uncommitted files", project.changed_files),
+            theme.dirty.to_ratatui(),
+        )
+    };
+    lines.push(Line::from(vec![
+        Span::styled("Status:    ", Style::default().fg(theme.dim.to_ratatui())),
+        Span::styled(status_text, Style::default().fg(status_color)),
+    ]));
+
+    // Last commit
+    let last_commit_str = match project.last_commit {
+        Some(dt) => format_relative_time(dt),
+        None => "no commits".to_string(),
+    };
+    lines.push(Line::from(vec![
+        Span::styled("Last commit: ", Style::default().fg(theme.dim.to_ratatui())),
+        Span::raw(&last_commit_str),
+    ]));
+
+    // Commit message
+    if let Some(ref msg) = project.last_commit_message {
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                format!("\"{msg}\""),
+                Style::default()
+                    .fg(theme.header.to_ratatui())
+                    .add_modifier(Modifier::ITALIC),
+            ),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+
+    // Remote URL (shortened)
+    let remote_display = match &project.remote_url {
+        Some(url) => url
+            .strip_prefix("https://")
+            .or_else(|| url.strip_prefix("http://"))
+            .unwrap_or(url),
+        None => "—",
+    };
+    lines.push(Line::from(vec![
+        Span::styled("Remote:    ", Style::default().fg(theme.dim.to_ratatui())),
+        Span::raw(remote_display),
+    ]));
+
+    // Stash count
+    lines.push(Line::from(vec![
+        Span::styled("Stashes:   ", Style::default().fg(theme.dim.to_ratatui())),
+        Span::raw(format!("{}", project.stash_count)),
+    ]));
+
+    // CI status
+    let (ci_text, ci_color) = match project.ci_status {
+        CiStatus::Pass => ("Pass", theme.clean.to_ratatui()),
+        CiStatus::Fail => ("Fail", theme.stale.to_ratatui()),
+        CiStatus::Pending => ("Pending", theme.dirty.to_ratatui()),
+        CiStatus::Unknown => ("—", theme.dim.to_ratatui()),
+    };
+    lines.push(Line::from(vec![
+        Span::styled("CI:        ", Style::default().fg(theme.dim.to_ratatui())),
+        Span::styled(ci_text, Style::default().fg(ci_color)),
+    ]));
+
+    let detail = Paragraph::new(lines).block(block);
+    frame.render_widget(detail, area);
+}
+
+/// Render the footer with key hints.
+fn render_footer(frame: &mut ratatui::Frame, area: Rect, theme: &Theme) {
     let footer = Paragraph::new(Line::from(vec![
         Span::styled(
             " ↑↓ ",
@@ -272,7 +404,6 @@ fn render_footer(frame: &mut ratatui::Frame, app: &App, area: Rect, theme: &Them
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw("Quit"),
-        Span::styled(&selected_info, Style::default().fg(theme.dim.to_ratatui())),
     ]))
     .block(Block::default().borders(Borders::ALL));
 
