@@ -24,6 +24,9 @@ pub struct App {
     table_state: TableState,
     list_state: ListState,
     should_quit: bool,
+    search_mode: bool,
+    search_query: String,
+    filtered_indices: Vec<usize>,
 }
 
 impl App {
@@ -31,6 +34,7 @@ impl App {
     pub fn new(statuses: Vec<ProjectStatus>) -> Self {
         let mut table_state = TableState::default();
         let mut list_state = ListState::default();
+        let filtered_indices: Vec<usize> = (0..statuses.len()).collect();
         if !statuses.is_empty() {
             table_state.select(Some(0));
             list_state.select(Some(0));
@@ -40,18 +44,21 @@ impl App {
             table_state,
             list_state,
             should_quit: false,
+            search_mode: false,
+            search_query: String::new(),
+            filtered_indices,
         }
     }
 
-    /// Move selection up.
+    /// Move selection up within the filtered list.
     pub fn previous(&mut self) {
-        if self.statuses.is_empty() {
+        if self.filtered_indices.is_empty() {
             return;
         }
-        let i = match self.table_state.selected() {
+        let i = match self.list_state.selected() {
             Some(i) => {
                 if i == 0 {
-                    self.statuses.len() - 1
+                    self.filtered_indices.len() - 1
                 } else {
                     i - 1
                 }
@@ -62,14 +69,14 @@ impl App {
         self.list_state.select(Some(i));
     }
 
-    /// Move selection down.
+    /// Move selection down within the filtered list.
     pub fn next(&mut self) {
-        if self.statuses.is_empty() {
+        if self.filtered_indices.is_empty() {
             return;
         }
-        let i = match self.table_state.selected() {
+        let i = match self.list_state.selected() {
             Some(i) => {
-                if i >= self.statuses.len() - 1 {
+                if i >= self.filtered_indices.len() - 1 {
                     0
                 } else {
                     i + 1
@@ -83,9 +90,45 @@ impl App {
 
     /// Get the currently selected project status, if any.
     pub fn selected_project(&self) -> Option<&ProjectStatus> {
-        self.table_state
+        self.list_state
             .selected()
-            .and_then(|i| self.statuses.get(i))
+            .and_then(|i| self.filtered_indices.get(i))
+            .and_then(|&idx| self.statuses.get(idx))
+    }
+
+    /// Enter search mode: clear the query and show all projects.
+    pub fn enter_search_mode(&mut self) {
+        self.search_mode = true;
+        self.search_query.clear();
+        self.rebuild_filtered_indices();
+    }
+
+    /// Exit search mode: clear the query and show all projects.
+    pub fn exit_search_mode(&mut self) {
+        self.search_mode = false;
+        self.search_query.clear();
+        self.rebuild_filtered_indices();
+    }
+
+    /// Rebuild the filtered indices based on the current search query.
+    fn rebuild_filtered_indices(&mut self) {
+        let query = self.search_query.to_lowercase();
+        self.filtered_indices = self
+            .statuses
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| query.is_empty() || s.name.to_lowercase().contains(&query))
+            .map(|(i, _)| i)
+            .collect();
+
+        // Reset selection to first filtered item
+        if self.filtered_indices.is_empty() {
+            self.table_state.select(None);
+            self.list_state.select(None);
+        } else {
+            self.table_state.select(Some(0));
+            self.list_state.select(Some(0));
+        }
     }
 
     /// Open the selected project's remote URL in the default browser.
@@ -180,14 +223,21 @@ fn render(frame: &mut ratatui::Frame, app: &mut App, theme: &Theme) {
 
     render_project_list(frame, app, panes[0], theme);
     render_detail_panel(frame, app, panes[1], theme);
-    render_footer(frame, outer[2], theme);
+    render_footer(frame, app, outer[2], theme);
 }
 
 /// Render the header bar with summary stats.
 fn render_header(frame: &mut ratatui::Frame, app: &App, area: Rect, theme: &Theme) {
     let total = app.statuses.len();
+    let filtered = app.filtered_indices.len();
     let dirty = app.statuses.iter().filter(|s| !s.is_clean).count();
     let stale = app.statuses.iter().filter(|s| is_stale(s)).count();
+
+    let project_count = if filtered < total {
+        format!("  {} of {} projects", filtered, total)
+    } else {
+        format!("  {} projects", total)
+    };
 
     let header = Paragraph::new(Line::from(vec![
         Span::styled(
@@ -197,7 +247,7 @@ fn render_header(frame: &mut ratatui::Frame, app: &App, area: Rect, theme: &Them
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!("  {} projects", total),
+            project_count,
             Style::default().fg(theme.header.to_ratatui()),
         ),
         Span::styled(
@@ -228,9 +278,10 @@ fn is_stale(status: &ProjectStatus) -> bool {
 /// Render the left pane: project list with status dots.
 fn render_project_list(frame: &mut ratatui::Frame, app: &mut App, area: Rect, theme: &Theme) {
     let items: Vec<ListItem> = app
-        .statuses
+        .filtered_indices
         .iter()
-        .map(|s| {
+        .map(|&idx| {
+            let s = &app.statuses[idx];
             let dot_color = if s.is_clean {
                 theme.clean.to_ratatui()
             } else {
@@ -380,33 +431,53 @@ fn render_detail_panel(frame: &mut ratatui::Frame, app: &App, area: Rect, theme:
     frame.render_widget(detail, area);
 }
 
-/// Render the footer with key hints.
-fn render_footer(frame: &mut ratatui::Frame, area: Rect, theme: &Theme) {
-    let footer = Paragraph::new(Line::from(vec![
-        Span::styled(
-            " ↑↓ ",
-            Style::default()
-                .fg(theme.accent.to_ratatui())
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("Navigate  "),
-        Span::styled(
-            " Enter ",
-            Style::default()
-                .fg(theme.accent.to_ratatui())
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("Open URL  "),
-        Span::styled(
-            " q ",
-            Style::default()
-                .fg(theme.accent.to_ratatui())
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("Quit"),
-    ]))
-    .block(Block::default().borders(Borders::ALL));
+/// Render the footer with key hints or search bar.
+fn render_footer(frame: &mut ratatui::Frame, app: &App, area: Rect, theme: &Theme) {
+    let content = if app.search_mode {
+        Line::from(vec![
+            Span::styled(
+                " / search: ",
+                Style::default()
+                    .fg(theme.accent.to_ratatui())
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(&app.search_query),
+            Span::styled("█", Style::default().fg(theme.accent.to_ratatui())),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled(
+                " ↑↓ ",
+                Style::default()
+                    .fg(theme.accent.to_ratatui())
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("Navigate  "),
+            Span::styled(
+                " / ",
+                Style::default()
+                    .fg(theme.accent.to_ratatui())
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("Search  "),
+            Span::styled(
+                " Enter ",
+                Style::default()
+                    .fg(theme.accent.to_ratatui())
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("Open URL  "),
+            Span::styled(
+                " q ",
+                Style::default()
+                    .fg(theme.accent.to_ratatui())
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("Quit"),
+        ])
+    };
 
+    let footer = Paragraph::new(content).block(Block::default().borders(Borders::ALL));
     frame.render_widget(footer, area);
 }
 
@@ -418,17 +489,44 @@ fn handle_event(app: &mut App) -> Result<bool> {
         if key.kind != KeyEventKind::Press {
             return Ok(true);
         }
-        match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => {
-                app.should_quit = true;
-                return Ok(false);
+
+        if app.search_mode {
+            match key.code {
+                KeyCode::Esc => {
+                    app.exit_search_mode();
+                }
+                KeyCode::Backspace => {
+                    app.search_query.pop();
+                    app.rebuild_filtered_indices();
+                }
+                KeyCode::Char(c) => {
+                    app.search_query.push(c);
+                    app.rebuild_filtered_indices();
+                }
+                KeyCode::Down => app.next(),
+                KeyCode::Up => app.previous(),
+                KeyCode::Enter => {
+                    // Exit search mode but keep the filter active
+                    app.search_mode = false;
+                }
+                _ => {}
             }
-            KeyCode::Down | KeyCode::Char('j') => app.next(),
-            KeyCode::Up | KeyCode::Char('k') => app.previous(),
-            KeyCode::Enter => {
-                app.open_selected_url()?;
+        } else {
+            match key.code {
+                KeyCode::Char('q') | KeyCode::Esc => {
+                    app.should_quit = true;
+                    return Ok(false);
+                }
+                KeyCode::Char('/') => {
+                    app.enter_search_mode();
+                }
+                KeyCode::Down | KeyCode::Char('j') => app.next(),
+                KeyCode::Up | KeyCode::Char('k') => app.previous(),
+                KeyCode::Enter => {
+                    app.open_selected_url()?;
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
     Ok(true)
@@ -641,5 +739,137 @@ mod tests {
     fn test_format_relative_time_years() {
         let then = Utc::now() - chrono::Duration::days(400);
         assert_eq!(format_relative_time(then), "1y ago");
+    }
+
+    #[test]
+    fn test_enter_search_mode() {
+        let statuses = vec![
+            make_status("alpha", true, None),
+            make_status("beta", false, None),
+        ];
+        let mut app = App::new(statuses);
+        assert!(!app.search_mode);
+
+        app.enter_search_mode();
+        assert!(app.search_mode);
+        assert!(app.search_query.is_empty());
+        assert_eq!(app.filtered_indices.len(), 2);
+    }
+
+    #[test]
+    fn test_search_filters_list() {
+        let statuses = vec![
+            make_status("alpha", true, None),
+            make_status("beta", false, None),
+            make_status("alphabet", true, None),
+        ];
+        let mut app = App::new(statuses);
+        app.enter_search_mode();
+
+        app.search_query.push_str("alph");
+        app.rebuild_filtered_indices();
+
+        assert_eq!(app.filtered_indices.len(), 2);
+        assert_eq!(app.filtered_indices, vec![0, 2]);
+        assert_eq!(app.list_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn test_search_case_insensitive() {
+        let statuses = vec![
+            make_status("MyProject", true, None),
+            make_status("other", false, None),
+        ];
+        let mut app = App::new(statuses);
+        app.enter_search_mode();
+
+        app.search_query.push_str("myproj");
+        app.rebuild_filtered_indices();
+
+        assert_eq!(app.filtered_indices.len(), 1);
+        assert_eq!(app.filtered_indices[0], 0);
+    }
+
+    #[test]
+    fn test_esc_clears_search() {
+        let statuses = vec![
+            make_status("alpha", true, None),
+            make_status("beta", false, None),
+        ];
+        let mut app = App::new(statuses);
+        app.enter_search_mode();
+        app.search_query.push_str("alpha");
+        app.rebuild_filtered_indices();
+        assert_eq!(app.filtered_indices.len(), 1);
+
+        app.exit_search_mode();
+        assert!(!app.search_mode);
+        assert!(app.search_query.is_empty());
+        assert_eq!(app.filtered_indices.len(), 2);
+    }
+
+    #[test]
+    fn test_empty_query_shows_all() {
+        let statuses = vec![
+            make_status("alpha", true, None),
+            make_status("beta", false, None),
+            make_status("gamma", true, None),
+        ];
+        let mut app = App::new(statuses);
+        app.enter_search_mode();
+
+        // Empty query → all visible
+        assert_eq!(app.filtered_indices.len(), 3);
+
+        // Type something, then delete it
+        app.search_query.push_str("alpha");
+        app.rebuild_filtered_indices();
+        assert_eq!(app.filtered_indices.len(), 1);
+
+        app.search_query.clear();
+        app.rebuild_filtered_indices();
+        assert_eq!(app.filtered_indices.len(), 3);
+    }
+
+    #[test]
+    fn test_navigation_within_filtered_list() {
+        let statuses = vec![
+            make_status("alpha", true, None),
+            make_status("beta", false, None),
+            make_status("alphabet", true, None),
+        ];
+        let mut app = App::new(statuses);
+        app.enter_search_mode();
+        app.search_query.push_str("alph");
+        app.rebuild_filtered_indices();
+
+        // Filtered list has 2 items (indices 0, 2)
+        assert_eq!(app.list_state.selected(), Some(0));
+        assert_eq!(app.selected_project().unwrap().name, "alpha");
+
+        app.next();
+        assert_eq!(app.list_state.selected(), Some(1));
+        assert_eq!(app.selected_project().unwrap().name, "alphabet");
+
+        // Wrap around
+        app.next();
+        assert_eq!(app.list_state.selected(), Some(0));
+        assert_eq!(app.selected_project().unwrap().name, "alpha");
+    }
+
+    #[test]
+    fn test_search_no_matches() {
+        let statuses = vec![
+            make_status("alpha", true, None),
+            make_status("beta", false, None),
+        ];
+        let mut app = App::new(statuses);
+        app.enter_search_mode();
+        app.search_query.push_str("zzz");
+        app.rebuild_filtered_indices();
+
+        assert!(app.filtered_indices.is_empty());
+        assert!(app.selected_project().is_none());
+        assert!(app.list_state.selected().is_none());
     }
 }
